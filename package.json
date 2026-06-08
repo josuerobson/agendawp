@@ -11,6 +11,9 @@
     "postinstall": "npm install --prefix server",
     "start": "node server/server.js"
   },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",
