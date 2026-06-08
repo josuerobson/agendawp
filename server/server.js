@@ -83,6 +83,35 @@ const saveMessageAndNotifyN8N = async (agendamento_id, whatsapp_destino, mensage
   return result;
 };
 
+// Obter a data e hora atual ajustada para o fuso horário de Brasília (GMT-3)
+const getBrazilTime = () => {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  
+  const parts = formatter.formatToParts(now);
+  const day = parts.find(p => p.type === 'day').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const year = parts.find(p => p.type === 'year').value;
+  const hour = parts.find(p => p.type === 'hour').value;
+  const minute = parts.find(p => p.type === 'minute').value;
+  const second = parts.find(p => p.type === 'second').value;
+  
+  return {
+    dateStr: `${year}-${month}-${day}`, // YYYY-MM-DD
+    timeStr: `${hour}:${minute}:${second}`, // HH:MM:SS
+    fullDate: new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`)
+  };
+};
+
 // ==========================================
 // 1. DASHBOARD STATS
 // ==========================================
@@ -887,12 +916,19 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
         );
 
         if (matchMed) {
-          // Buscar horários
-          const hojeStr = new Date().toISOString().split('T')[0];
-          const slots = await dbAll(
-            "SELECT * FROM Disponibilidade WHERE medico_id = ? AND data >= ? AND status_disponivel = 1 ORDER BY data ASC, hora_inicio ASC LIMIT 5",
-            [matchMed.id, hojeStr]
+          // Buscar horários com no mínimo 1 hora de proximidade
+          const brTime = getBrazilTime();
+          const dbSlots = await dbAll(
+            "SELECT * FROM Disponibilidade WHERE medico_id = ? AND data >= ? AND status_disponivel = 1 ORDER BY data ASC, hora_inicio ASC LIMIT 20",
+            [matchMed.id, brTime.dateStr]
           );
+
+          const slots = dbSlots.filter(slot => {
+            const slotDate = new Date(`${slot.data}T${slot.hora_inicio}:00`);
+            const diffMs = slotDate.getTime() - brTime.fullDate.getTime();
+            const diffHours = diffMs / (1000 * 60 * 60);
+            return diffHours >= 1.0;
+          }).slice(0, 5);
 
           if (slots.length > 0) {
             let listStr = `Encontrei os seguintes horários livres com *${matchMed.nome}* (${matchMed.especialidade}):\n\n`;
