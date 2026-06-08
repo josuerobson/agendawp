@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Stethoscope, Plus, Trash2, Calendar, Clock, X, AlertCircle } from 'lucide-react';
 
 function MedicosView() {
@@ -357,7 +358,7 @@ function MedicosView() {
       </div>
 
       {/* Doctor Modal Add/Edit */}
-      {showDoctorModal && (
+      {showDoctorModal && createPortal(
         <div className="modal-overlay">
           <div className="modal-content animate-scale-up">
             <div className="modal-header">
@@ -434,11 +435,12 @@ function MedicosView() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Availability Batch Modal */}
-      {showSlotModal && (
+      {showSlotModal && createPortal(
         <div className="modal-overlay">
           <div className="modal-content animate-scale-up" style={{ maxWidth: '550px' }}>
             <div className="modal-header">
@@ -552,7 +554,8 @@ function MedicosView() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <style>{`
