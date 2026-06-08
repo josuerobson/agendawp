@@ -162,6 +162,14 @@ db.serialize(() => {
     )
   `);
 
+  // Criar tabela de Configuracoes
+  db.run(`
+    CREATE TABLE IF NOT EXISTS Configuracoes (
+      chave TEXT PRIMARY KEY,
+      valor TEXT
+    )
+  `);
+
   console.log('Tabelas de banco de dados verificadas/criadas.');
 
   // Verificar e semear Salas de forma independente
@@ -173,6 +181,29 @@ db.serialize(() => {
       console.log('Salas semeadas de forma independente.');
     }
   });
+
+  // Verificar e semear Configuracoes de forma independente
+  db.get('SELECT COUNT(*) as count FROM Configuracoes', (err, row) => {
+    if (!err && row && row.count === 0) {
+      const defaultConfigs = [
+        ['url_n8n_mensagens', ''],
+        ['url_n8n_alertas', ''],
+        ['whatsapp_instancia', 'instancia_principal'],
+        ['whatsapp_token', ''],
+        ['nome_clinica', 'Agenda WP'],
+        ['telefone_clinica', ''],
+        ['bot_ativo', '1'],
+        ['bot_mensagem_boas_vindas', 'Olá! Seja bem-vindo à clínica *{clinica}*. Sou a assistente virtual da clínica. 🤖\nIdentifiquei que este número ainda não está cadastrado em nosso sistema.\n\nPara começarmos seu cadastro rápido, por favor, digite seu *nome completo*:'],
+        ['lembrete_horario', '08:00'],
+        ['lembrete_modelo', 'Olá *{paciente}*! 🏥\nLembramos que seu agendamento de *{tipo}* com *{medico}* está marcado para amanhã (*{data}*) às *{hora}h*.\n\nResponda *1* para *CONFIRMAR* ou *2* para *CANCELAR*.']
+      ];
+      defaultConfigs.forEach(([chave, valor]) => {
+        db.run('INSERT OR IGNORE INTO Configuracoes (chave, valor) VALUES (?, ?)', [chave, valor]);
+      });
+      console.log('Configurações padrão semeadas.');
+    }
+  });
+
 
   // Verificar se já existem registros para evitar duplicar sementes
   db.get('SELECT COUNT(*) as count FROM Convenios', (err, row) => {

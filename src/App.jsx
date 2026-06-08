@@ -11,7 +11,8 @@ import {
   Activity,
   DoorOpen,
   Tv,
-  Bell
+  Bell,
+  Settings
 } from 'lucide-react';
 
 import Dashboard from './components/Dashboard';
@@ -23,11 +24,13 @@ import WhatsappSimPanel from './components/WhatsappSimPanel';
 import SalasView from './components/SalasView';
 import TelaMedicoView from './components/TelaMedicoView';
 import PainelChamadasView from './components/PainelChamadasView';
+import ConfiguracoesView from './components/ConfiguracoesView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [theme, setTheme] = useState('dark');
   const [selectedPatientForBooking, setSelectedPatientForBooking] = useState(null);
+  const [nomeClinica, setNomeClinica] = useState('Agenda WP');
 
   // Toggle Theme
   useEffect(() => {
@@ -39,6 +42,34 @@ function App() {
     }
   }, [theme]);
 
+  // Load Clinic Name Configuration on Mount
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const res = await fetch('/api/configuracoes');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.nome_clinica) {
+            setNomeClinica(data.nome_clinica);
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao carregar configuracao de branding:', err);
+      }
+    };
+
+    fetchConfig();
+
+    // Listener for instant update when saved in ConfiguracoesView
+    const handleConfigUpdate = (e) => {
+      if (e.detail && e.detail.nome_clinica) {
+        setNomeClinica(e.detail.nome_clinica);
+      }
+    };
+    window.addEventListener('config-updated', handleConfigUpdate);
+    return () => window.removeEventListener('config-updated', handleConfigUpdate);
+  }, []);
+
   // Sidebar Menu Items
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -49,7 +80,8 @@ function App() {
     { id: 'whatsapp', label: 'Simulador WhatsApp', icon: MessageSquare, badge: true },
     { id: 'salas', label: 'Consultórios / Salas', icon: DoorOpen },
     { id: 'tela_medico', label: 'Console do Médico', icon: Bell },
-    { id: 'painel_chamadas', label: 'Painel TV Chamadas', icon: Tv }
+    { id: 'painel_chamadas', label: 'Painel TV Chamadas', icon: Tv },
+    { id: 'configuracoes', label: 'Configurações', icon: Settings }
   ];
 
   return (
@@ -59,7 +91,7 @@ function App() {
         <div className="sidebar-brand">
           <Activity className="brand-logo" size={28} />
           <div>
-            <h2>Agenda WP</h2>
+            <h2>{nomeClinica}</h2>
             <span>Gestão Clínica</span>
           </div>
         </div>
@@ -148,6 +180,7 @@ function App() {
           {activeTab === 'salas' && <SalasView />}
           {activeTab === 'tela_medico' && <TelaMedicoView />}
           {activeTab === 'painel_chamadas' && <PainelChamadasView />}
+          {activeTab === 'configuracoes' && <ConfiguracoesView />}
         </main>
       </div>
 

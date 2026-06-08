@@ -39,6 +39,50 @@ const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
   });
 });
 
+// Disparar Webhook N8N de forma assíncrona e segura
+const triggerN8NWebhook = async (type, payload) => {
+  try {
+    const key = type === 'mensagens' ? 'url_n8n_mensagens' : 'url_n8n_alertas';
+    const configRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = ?", [key]);
+    const url = configRow ? configRow.valor : '';
+    
+    if (url && url.startsWith('http')) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      console.log(`N8N webhook (${type}) disparado. Status: ${response.status}`);
+    }
+  } catch (error) {
+    console.error(`Erro ao disparar webhook N8N (${type}):`, error.message);
+  }
+};
+
+// Salvar mensagem no banco e notificar N8N
+const saveMessageAndNotifyN8N = async (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) => {
+  const result = await dbRun(
+    "INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES (?, ?, ?, ?, ?)",
+    [agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio]
+  );
+  
+  // Classificar evento
+  const isAlert = status_envio === 'entregue' && mensagem.includes('Lembramos que seu agendamento');
+  const eventType = isAlert ? 'alertas' : 'mensagens';
+  
+  await triggerN8NWebhook(eventType, {
+    id: result.id,
+    agendamento_id,
+    whatsapp: whatsapp_destino,
+    mensagem,
+    status: status_envio,
+    data_envio,
+    timestamp: Date.now()
+  });
+  
+  return result;
+};
+
 // ==========================================
 // 1. DASHBOARD STATS
 // ==========================================
@@ -462,9 +506,8 @@ Responda *CONFIRMAR* para confirmar sua presença ou *CANCELAR* para desmarcar.`
     
     // 5. Salvar mensagem no WhatsApp simulated log
     // Começa como 'enviado', e mudaremos para 'entregue' e 'lido' após alguns segundos de simulação
-    const msgResult = await dbRun(
-      "INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES (?, ?, ?, 'enviado', ?)",
-      [agendamentoId, paciente.whatsapp, msgTemplate, nowStr]
+    const msgResult = await saveMessageAndNotifyN8N(
+      agendamentoId, paciente.whatsapp, msgTemplate, 'enviado', nowStr
     );
 
     // Simular que o WhatsApp foi entregue após 2 segundos e lido após 4 segundos
@@ -546,9 +589,8 @@ app.put('/api/agendamentos/:id/status', async (req, res) => {
 
     if (notifyMsg) {
       const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-      await dbRun(
-        "INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES (?, ?, ?, 'lido', ?)",
-        [agendamentoId, paciente.whatsapp, notifyMsg, nowStr]
+      await saveMessageAndNotifyN8N(
+        agendamentoId, paciente.whatsapp, notifyMsg, 'lido', nowStr
       );
     }
 
@@ -646,10 +688,7 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
     const cleanReply = respostaText.toUpperCase().trim();
 
     // 1. Inserir a resposta do paciente no histórico
-    await dbRun(
-      "INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES (NULL, ?, ?, 'recebida', ?)",
-      [whatsapp, respostaText, nowStr]
-    );
+    await saveMessageAndNotifyN8N(null, whatsapp, respostaText, 'recebida', nowStr);
 
     // 2. Buscar paciente e estado de chat
     let paciente = await dbGet("SELECT * FROM Pacientes WHERE whatsapp = ?", [whatsapp]);
@@ -690,12 +729,18 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
         }
 
         const botTimeStr = new Date(Date.now() + 1000).toISOString().replace('T', ' ').substring(0, 19);
-        await dbRun(
-          "INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES (?, ?, ?, 'lido', ?)",
-          [targetAgendamentoId, whatsapp, responseTextBot, botTimeStr]
-        );
+        await saveMessageAndNotifyN8N(targetAgendamentoId, whatsapp, responseTextBot, 'lido', botTimeStr);
         return res.json({ success: true, botReplied: responseTextBot });
       }
+    }
+
+    // Verificar se o chatbot está ativo antes de prosseguir com o fluxo de triagem/conversação
+    const botAtivoRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'bot_ativo'");
+    const botAtivo = botAtivoRow ? botAtivoRow.valor === '1' : true;
+
+    if (!botAtivo) {
+      // Se o chatbot estiver inativo, salvamos a mensagem recebida e não geramos resposta automática
+      return res.json({ success: true, botReplied: null });
     }
 
     // ==========================================
@@ -705,7 +750,14 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
       if (!chatState) {
         // Iniciar cadastro
         await setChatState(whatsapp, 'AWAITING_NAME');
-        responseTextBot = 'Olá! Seja bem-vindo à clínica *Agenda WP*. Sou a assistente virtual da clínica. 🤖\nIdentifiquei que este número ainda não está cadastrado em nosso sistema.\n\nPara começarmos seu cadastro rápido, por favor, digite seu *nome completo*:';
+        const welcomeRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'bot_mensagem_boas_vindas'");
+        const clinicaRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'nome_clinica'");
+        const clinicaName = clinicaRow ? clinicaRow.valor : 'Agenda WP';
+        let welcomeTemplate = welcomeRow ? welcomeRow.valor : '';
+        if (!welcomeTemplate) {
+          welcomeTemplate = 'Olá! Seja bem-vindo à clínica *{clinica}*. Sou a assistente virtual da clínica. 🤖\nIdentifiquei que este número ainda não está cadastrado em nosso sistema.\n\nPara começarmos seu cadastro rápido, por favor, digite seu *nome completo*:';
+        }
+        responseTextBot = welcomeTemplate.replace(/{clinica}/g, clinicaName);
       } 
       else if (chatState.estado === 'AWAITING_NAME') {
         // Nome recebido, pedir CPF
@@ -905,9 +957,8 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
     // 3. Gravar resposta do Bot
     if (responseTextBot) {
       const botTimeStr = new Date(Date.now() + 1000).toISOString().replace('T', ' ').substring(0, 19);
-      await dbRun(
-        "INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES (?, ?, ?, 'lido', ?)",
-        [targetAgendamentoId, whatsapp, responseTextBot, botTimeStr]
+      await saveMessageAndNotifyN8N(
+        targetAgendamentoId, whatsapp, responseTextBot, 'lido', botTimeStr
       );
     }
 
@@ -928,6 +979,16 @@ app.post('/api/automacoes/disparar-lembretes', async (req, res) => {
     amanha.setDate(hoje.getDate() + 1);
     const amanhaStr = amanha.toISOString().split('T')[0]; // YYYY-MM-DD
 
+    // Obter modelo de lembrete e nome da clínica configurados
+    const templateRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'lembrete_modelo'");
+    const clinicaRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'nome_clinica'");
+    
+    let template = templateRow ? templateRow.valor : '';
+    if (!template) {
+      template = 'Olá *{paciente}*! 🏥\nLembramos que seu agendamento de *{tipo}* com *{medico}* está marcado para amanhã (*{data}*) às *{hora}h*.\n\nResponda *1* para *CONFIRMAR* ou *2* para *CANCELAR*.';
+    }
+    const clinicaName = clinicaRow ? clinicaRow.valor : 'Agenda WP';
+
     // Buscar agendamentos de amanhã que estão 'pendente' ou 'solicitado' (não cancelados)
     const agendamentosAmanha = await dbAll(`
       SELECT a.*, p.nome as paciente_nome, p.whatsapp as paciente_whatsapp, m.nome as medico_nome, m.especialidade
@@ -943,13 +1004,17 @@ app.post('/api/automacoes/disparar-lembretes', async (req, res) => {
     for (const a of agendamentosAmanha) {
       const hora = a.data_hora.split(' ')[1];
       const dataFormatada = amanhaStr.split('-').reverse().join('/');
-      const msg = `Olá *${a.paciente_nome}*! 🏥\nLembramos que seu agendamento de *${a.tipo_atendimento === 'consulta' ? 'consulta' : 'exame'}* com *${a.medico_nome}* está marcado para amanhã (*${dataFormatada}*) às *${hora}h*.\n\nResponda *1* para *CONFIRMAR* ou *2* para *CANCELAR*.`;
+      
+      const msg = template
+        .replace(/{paciente}/g, a.paciente_nome)
+        .replace(/{tipo}/g, a.tipo_atendimento === 'consulta' ? 'consulta' : 'exame')
+        .replace(/{medico}/g, a.medico_nome)
+        .replace(/{data}/g, dataFormatada)
+        .replace(/{hora}/g, hora)
+        .replace(/{clinica}/g, clinicaName);
       
       // Salvar a mensagem no log e associar ao ID do agendamento
-      await dbRun(
-        "INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES (?, ?, ?, 'entregue', ?)",
-        [a.id, a.paciente_whatsapp, msg, nowStr]
-      );
+      await saveMessageAndNotifyN8N(a.id, a.paciente_whatsapp, msg, 'entregue', nowStr);
       
       disparados.push({ paciente: a.paciente_nome, hora });
     }
@@ -1156,6 +1221,35 @@ app.get('/api/pacientes/:id/historico-atendimentos', async (req, res) => {
   }
 });
 
+// Obter todas as configurações
+app.get('/api/configuracoes', async (req, res) => {
+  try {
+    const rows = await dbAll("SELECT * FROM Configuracoes");
+    const config = {};
+    rows.forEach(row => {
+      config[row.chave] = row.valor;
+    });
+    res.json(config);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Atualizar configurações em lote
+app.post('/api/configuracoes', async (req, res) => {
+  const configs = req.body;
+  try {
+    for (const [chave, valor] of Object.entries(configs)) {
+      await dbRun(
+        "INSERT OR REPLACE INTO Configuracoes (chave, valor) VALUES (?, ?)",
+        [chave, valor]
+      );
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Servir arquivos estáticos do frontend (React build) em produção
 const distPath = path.join(__dirname, '../dist');
