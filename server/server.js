@@ -1156,24 +1156,6 @@ app.get('/api/pacientes/:id/historico-atendimentos', async (req, res) => {
   }
 });
 
-// Endpoint temporário de depuração de arquivos no contêiner
-app.get('/api/debug-files', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  try {
-    const rootDir = path.join(__dirname, '..');
-    const files = fs.readdirSync(rootDir);
-    res.json({
-      __dirname,
-      rootDir,
-      files,
-      distExists: fs.existsSync(path.join(rootDir, 'dist')),
-      distFiles: fs.existsSync(path.join(rootDir, 'dist')) ? fs.readdirSync(path.join(rootDir, 'dist')) : []
-    });
-  } catch (err) {
-    res.json({ error: err.message });
-  }
-});
 
 // Servir arquivos estáticos do frontend (React build) em produção
 const distPath = path.join(__dirname, '../dist');
