@@ -123,7 +123,7 @@ function ConfiguracoesView() {
             </div>
             
             <div className="form-group">
-              <label className="form-label">URL N8N para Troca de Mensagens (Webhook)</label>
+              <label className="form-label">URL N8N para Troca de Mensagens (Webhook de Saída)</label>
               <input
                 type="url"
                 className="form-control"
@@ -132,6 +132,31 @@ function ConfiguracoesView() {
                 onChange={(e) => handleInputChange('url_n8n_mensagens', e.target.value)}
               />
               <span className="input-tip">Envia eventos de mensagens enviadas, lidas e recebidas em tempo real.</span>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Webhook de Entrada no Sistema (URL para N8N enviar mensagens)</label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+                  value={`${window.location.origin}/api/whatsapp/sim-reply`}
+                  readOnly
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/api/whatsapp/sim-reply`);
+                    alert('URL copiada para a área de transferência!');
+                  }}
+                  style={{ whiteSpace: 'nowrap', padding: '0 1rem' }}
+                >
+                  Copiar
+                </button>
+              </div>
+              <span className="input-tip">URL onde o N8N deve fazer requisições POST com {"{ whatsapp, respostaText }"} para entregar mensagens de pacientes e receber as respostas automáticas.</span>
             </div>
 
             <div className="form-group">
