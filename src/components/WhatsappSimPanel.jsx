@@ -13,6 +13,11 @@ function WhatsappSimPanel() {
 
   const messagesEndRef = useRef(null);
   const prevCountRef = useRef(0);
+  const activeChatRef = useRef(activeChat);
+
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
 
   useEffect(() => {
     fetchChats();
@@ -52,7 +57,7 @@ function WhatsappSimPanel() {
       const res = await fetch('/api/whatsapp/chats');
       const data = await res.json();
       setChats(data);
-      if (data.length > 0 && !activeChat) {
+      if (data.length > 0 && !activeChatRef.current) {
         setActiveChat(data[0]);
       }
     } catch (err) {
