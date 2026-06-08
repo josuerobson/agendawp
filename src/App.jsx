@@ -77,7 +77,7 @@ function App() {
     { id: 'pacientes', label: 'Pacientes', icon: Users },
     { id: 'medicos', label: 'Médicos', icon: Stethoscope },
     { id: 'convenios', label: 'Convênios', icon: FileText },
-    { id: 'whatsapp', label: 'Simulador WhatsApp', icon: MessageSquare, badge: true },
+    { id: 'whatsapp', label: 'Chat WhatsApp', icon: MessageSquare, badge: true },
     { id: 'salas', label: 'Consultórios / Salas', icon: DoorOpen },
     { id: 'tela_medico', label: 'Console do Médico', icon: Bell },
     { id: 'painel_chamadas', label: 'Painel TV Chamadas', icon: Tv },
@@ -146,7 +146,7 @@ function App() {
           <div className="header-status">
             <div className="status-indicator">
               <span className="dot pulse"></span>
-              <span className="status-label">Simulador WhatsApp Ativo</span>
+              <span className="status-label">Integração WhatsApp Ativa</span>
             </div>
             
             <img 

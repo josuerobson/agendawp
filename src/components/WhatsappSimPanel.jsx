@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Check, CheckCheck, MessageSquare, Shield, User, CornerDownLeft } from 'lucide-react';
+import { Send, Check, CheckCheck, MessageSquare, Shield, User, CornerDownLeft, ToggleLeft, ToggleRight } from 'lucide-react';
 
 function WhatsappSimPanel() {
   const [chats, setChats] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [customReply, setCustomReply] = useState('');
+  const [simulationMode, setSimulationMode] = useState(false); // Default to false (production live chat mode)
   
   const [loadingChats, setLoadingChats] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -99,6 +100,31 @@ function WhatsappSimPanel() {
     }
   };
 
+  const sendClinicMessage = async (text) => {
+    if (!activeChat) return;
+    
+    try {
+      const res = await fetch('/api/whatsapp/enviar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          whatsapp: activeChat.numero,
+          mensagem: text
+        })
+      });
+      
+      if (!res.ok) throw new Error('Erro ao enviar mensagem');
+      
+      setCustomReply('');
+      // Recarregar mensagens imediatamente
+      fetchMessages(activeChat.numero);
+      // Recarregar chats para atualizar o snippet da lista lateral
+      fetchChats();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const triggerCronReminders = async () => {
     if (window.confirm('Deseja simular o disparo de lembretes automáticos (Cron 08h00) para os agendamentos de amanhã?')) {
       try {
@@ -118,7 +144,12 @@ function WhatsappSimPanel() {
   const handleCustomSubmit = (e) => {
     e.preventDefault();
     if (!customReply.trim()) return;
-    simulatePatientReply(customReply);
+    
+    if (simulationMode) {
+      simulatePatientReply(customReply);
+    } else {
+      sendClinicMessage(customReply);
+    }
   };
 
   const getTickIcon = (status) => {
@@ -154,7 +185,30 @@ function WhatsappSimPanel() {
         <div className="ws-header">
           <div>
             <h3>Conversas</h3>
-            <span className="sim-badge">Simulador</span>
+            <button 
+              type="button"
+              onClick={() => setSimulationMode(!simulationMode)}
+              style={{
+                background: simulationMode ? 'rgba(16, 185, 129, 0.12)' : 'rgba(14, 165, 233, 0.12)',
+                color: simulationMode ? 'var(--whatsapp)' : 'var(--primary)',
+                border: '1px solid',
+                borderColor: simulationMode ? 'rgba(16, 185, 129, 0.3)' : 'rgba(14, 165, 233, 0.3)',
+                fontSize: '0.65rem',
+                fontWeight: '700',
+                padding: '0.2rem 0.5rem',
+                borderRadius: 'var(--radius-sm)',
+                textTransform: 'uppercase',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                cursor: 'pointer',
+                marginTop: '0.25rem',
+                transition: 'all 0.2s ease'
+              }}
+              title="Clique para alternar entre Modo de Produção (Real) e Modo de Simulação (Testes)"
+            >
+              {simulationMode ? 'Simulador (Teste)' : 'Produção (Real)'}
+            </button>
           </div>
           <button 
             className="btn btn-secondary btn-sm btn-cron-trigger"
@@ -217,9 +271,17 @@ function WhatsappSimPanel() {
 
             {/* Timeline Messages */}
             <div className="wt-messages-container">
-              <div className="wt-encryption-notice">
+              <div className="wt-encryption-notice" style={{
+                background: simulationMode ? 'rgba(245, 158, 11, 0.05)' : 'rgba(16, 185, 129, 0.05)',
+                border: simulationMode ? '1px solid rgba(245, 158, 11, 0.15)' : '1px solid rgba(16, 185, 129, 0.15)',
+                color: simulationMode ? 'var(--warning)' : 'var(--whatsapp)'
+              }}>
                 <Shield size={12} />
-                <span>Simulador de integração do WhatsApp. Respostas processadas pelo Bot da clínica.</span>
+                <span>
+                  {simulationMode 
+                    ? "Modo Simulação: Mensagens enviadas simulam a resposta do Paciente para testar a IA." 
+                    : "Canal em Produção: Mensagens enviadas serão entregues ao Paciente real via Webhook N8N."}
+                </span>
               </div>
 
               {loadingMessages && messages.length === 0 ? (
@@ -245,35 +307,39 @@ function WhatsappSimPanel() {
 
             {/* Simulation controls panel */}
             <div className="wt-simulation-controls">
-              <div className="quick-replies-label">
-                <span>Simular ação do Paciente:</span>
-              </div>
-              <div className="quick-replies">
-                <button 
-                  className="btn btn-secondary btn-sm q-btn text-success"
-                  onClick={() => simulatePatientReply('Confirmar')}
-                >
-                  Responder "CONFIRMAR"
-                </button>
-                <button 
-                  className="btn btn-secondary btn-sm q-btn text-danger"
-                  onClick={() => simulatePatientReply('Cancelar')}
-                >
-                  Responder "CANCELAR"
-                </button>
-                <button 
-                  className="btn btn-secondary btn-sm q-btn text-warning"
-                  onClick={() => simulatePatientReply('Reagendar')}
-                >
-                  Responder "REAGENDAR"
-                </button>
-              </div>
+              {simulationMode && (
+                <>
+                  <div className="quick-replies-label">
+                    <span>Simular ação do Paciente:</span>
+                  </div>
+                  <div className="quick-replies" style={{ marginBottom: '0.25rem' }}>
+                    <button 
+                      className="btn btn-secondary btn-sm q-btn text-success"
+                      onClick={() => simulatePatientReply('Confirmar')}
+                    >
+                      Responder "CONFIRMAR"
+                    </button>
+                    <button 
+                      className="btn btn-secondary btn-sm q-btn text-danger"
+                      onClick={() => simulatePatientReply('Cancelar')}
+                    >
+                      Responder "CANCELAR"
+                    </button>
+                    <button 
+                      className="btn btn-secondary btn-sm q-btn text-warning"
+                      onClick={() => simulatePatientReply('Reagendar')}
+                    >
+                      Responder "REAGENDAR"
+                    </button>
+                  </div>
+                </>
+              )}
 
               {/* Free Text Input Simulation */}
               <form onSubmit={handleCustomSubmit} className="wt-input-area">
                 <input
                   type="text"
-                  placeholder="Escreva uma resposta conversacional..."
+                  placeholder={simulationMode ? "Simular resposta do paciente..." : "Escreva uma mensagem para o paciente..."}
                   className="form-control wt-input"
                   value={customReply}
                   onChange={(e) => setCustomReply(e.target.value)}

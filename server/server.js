@@ -969,6 +969,27 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
   }
 });
 
+// Enviar uma mensagem manual da clínica para o paciente (agente humano)
+app.post('/api/whatsapp/enviar', async (req, res) => {
+  const { whatsapp, mensagem } = req.body;
+  if (!whatsapp || !mensagem) {
+    return res.status(400).json({ error: 'WhatsApp e mensagem são obrigatórios' });
+  }
+
+  try {
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    // Salvar no histórico como enviado pelo atendente e notificar N8N para disparo real
+    await saveMessageAndNotifyN8N(null, whatsapp, mensagem, 'enviado', nowStr);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 // ==========================================
 // 8. AUTOMATION CRON SIMULATOR (Passo 5)
 // ==========================================
