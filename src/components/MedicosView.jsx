@@ -15,6 +15,7 @@ function MedicosView() {
   const [crm, setCrm] = useState('');
   const [especialidade, setEspecialidade] = useState('');
   const [patologias, setPatologias] = useState('');
+  const [valorConsulta, setValorConsulta] = useState('');
   const [doctorError, setDoctorError] = useState('');
 
   // Availability Batch Form State
@@ -61,6 +62,7 @@ function MedicosView() {
     setCrm('');
     setEspecialidade('');
     setPatologias('');
+    setValorConsulta('150.00');
     setDoctorError('');
     setShowDoctorModal(true);
   };
@@ -71,6 +73,7 @@ function MedicosView() {
     setCrm(m.crm);
     setEspecialidade(m.especialidade);
     setPatologias(m.patologias_atendidas || '');
+    setValorConsulta(m.valor_consulta !== null && m.valor_consulta !== undefined ? m.valor_consulta : '150.00');
     setDoctorError('');
     setShowDoctorModal(true);
   };
@@ -88,7 +91,8 @@ function MedicosView() {
       nome,
       crm,
       especialidade,
-      patologias_atendidas: patologias
+      patologias_atendidas: patologias,
+      valor_consulta: parseFloat(valorConsulta) || 0.0
     };
 
     try {
@@ -264,6 +268,12 @@ function MedicosView() {
                     <span className="label">Especialidade:</span>
                     <span className="value spec-badge">{m.especialidade}</span>
                   </div>
+                  <div className="info-row">
+                    <span className="label">Valor Consulta:</span>
+                    <span className="value price-badge">
+                      R$ {m.valor_consulta !== null && m.valor_consulta !== undefined ? Number(m.valor_consulta).toFixed(2) : '150.00'}
+                    </span>
+                  </div>
                   <div className="info-row pathologies">
                     <span className="label">Trata:</span>
                     <span className="value path-text">
@@ -422,6 +432,20 @@ function MedicosView() {
                   value={patologias}
                   onChange={(e) => setPatologias(e.target.value)}
                   rows={3}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Valor Consulta Particular (R$) *</label>
+                <input 
+                  type="number" 
+                  step="0.01"
+                  min="0"
+                  className="form-control"
+                  placeholder="Ex: 150.00"
+                  value={valorConsulta}
+                  onChange={(e) => setValorConsulta(e.target.value)}
+                  required
                 />
               </div>
 
@@ -661,6 +685,15 @@ function MedicosView() {
         .spec-badge {
           color: var(--primary);
           background: rgba(14, 165, 233, 0.08);
+          padding: 0.15rem 0.5rem;
+          border-radius: var(--radius-sm);
+          font-weight: 600;
+          font-size: 0.8rem;
+        }
+
+        .price-badge {
+          color: var(--success);
+          background: rgba(16, 185, 129, 0.08);
           padding: 0.15rem 0.5rem;
           border-radius: var(--radius-sm);
           font-weight: 600;

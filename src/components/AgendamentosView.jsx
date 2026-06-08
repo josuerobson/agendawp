@@ -48,18 +48,38 @@ function AgendamentosView({ initialPatient, onClearInitialPatient }) {
   // Open modal if patient is passed from other screen
   useEffect(() => {
     if (initialPatient && pacientes.length > 0 && medicos.length > 0) {
+      const defaultMedId = medicos[0]?.id || '';
       setPacienteId(initialPatient.id.toString());
-      setMedicoId(medicos[0]?.id || '');
+      setMedicoId(defaultMedId.toString());
       setSelectedDate(new Date().toISOString().split('T')[0]);
       setTipoAtendimento('consulta');
       setTipoPagamento('convenio');
-      setValorCombinado('150');
+      
+      const firstDoc = medicos.find(m => m.id.toString() === defaultMedId.toString());
+      const val = firstDoc && firstDoc.valor_consulta !== null && firstDoc.valor_consulta !== undefined 
+        ? firstDoc.valor_consulta.toString() 
+        : '150';
+      setValorCombinado(val);
+      
       setError('');
       setSuccess('');
       setShowModal(true);
       onClearInitialPatient();
     }
   }, [initialPatient, pacientes, medicos]);
+
+  // Update valorCombinado when selected doctor changes
+  useEffect(() => {
+    if (medicoId && medicos.length > 0) {
+      const selectedDoc = medicos.find(m => m.id.toString() === medicoId.toString());
+      if (selectedDoc) {
+        const val = selectedDoc.valor_consulta !== null && selectedDoc.valor_consulta !== undefined 
+          ? selectedDoc.valor_consulta.toString() 
+          : '150';
+        setValorCombinado(val);
+      }
+    }
+  }, [medicoId, medicos]);
 
   const fetchAgendamentos = async () => {
     try {
@@ -109,12 +129,19 @@ function AgendamentosView({ initialPatient, onClearInitialPatient }) {
   };
 
   const openModal = () => {
+    const defaultMedId = medicos[0]?.id || '';
     setPacienteId(pacientes[0]?.id || '');
-    setMedicoId(medicos[0]?.id || '');
+    setMedicoId(defaultMedId.toString());
     setSelectedDate(new Date().toISOString().split('T')[0]);
     setTipoAtendimento('consulta');
     setTipoPagamento('convenio');
-    setValorCombinado('150');
+    
+    const firstDoc = medicos.find(m => m.id.toString() === defaultMedId.toString());
+    const val = firstDoc && firstDoc.valor_consulta !== null && firstDoc.valor_consulta !== undefined 
+      ? firstDoc.valor_consulta.toString() 
+      : '150';
+    setValorCombinado(val);
+    
     setError('');
     setSuccess('');
     setShowModal(true);

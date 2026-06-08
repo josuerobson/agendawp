@@ -318,16 +318,17 @@ app.get('/api/medicos', async (req, res) => {
 });
 
 app.post('/api/medicos', async (req, res) => {
-  const { nome, crm, especialidade, patologias_atendidas } = req.body;
+  const { nome, crm, especialidade, patologias_atendidas, valor_consulta } = req.body;
   if (!nome || !crm || !especialidade) {
     return res.status(400).json({ error: 'Nome, CRM e Especialidade são obrigatórios' });
   }
+  const valor = valor_consulta !== undefined && valor_consulta !== null ? parseFloat(valor_consulta) : 150.00;
   try {
     const result = await dbRun(
-      "INSERT INTO Medicos (nome, crm, especialidade, patologias_atendidas) VALUES (?, ?, ?, ?)",
-      [nome, crm, especialidade, patologias_atendidas || '']
+      "INSERT INTO Medicos (nome, crm, especialidade, patologias_atendidas, valor_consulta) VALUES (?, ?, ?, ?, ?)",
+      [nome, crm, especialidade, patologias_atendidas || '', valor]
     );
-    res.status(201).json({ id: result.id, nome, crm, especialidade, patologias_atendidas });
+    res.status(201).json({ id: result.id, nome, crm, especialidade, patologias_atendidas, valor_consulta: valor });
   } catch (error) {
     if (error.message.includes('UNIQUE constraint failed: Medicos.crm')) {
       res.status(400).json({ error: 'Já existe um médico cadastrado com este CRM.' });
@@ -338,13 +339,14 @@ app.post('/api/medicos', async (req, res) => {
 });
 
 app.put('/api/medicos/:id', async (req, res) => {
-  const { nome, crm, especialidade, patologias_atendidas } = req.body;
+  const { nome, crm, especialidade, patologias_atendidas, valor_consulta } = req.body;
+  const valor = valor_consulta !== undefined && valor_consulta !== null ? parseFloat(valor_consulta) : 150.00;
   try {
     await dbRun(
-      "UPDATE Medicos SET nome = ?, crm = ?, especialidade = ?, patologias_atendidas = ? WHERE id = ?",
-      [nome, crm, especialidade, patologias_atendidas, req.params.id]
+      "UPDATE Medicos SET nome = ?, crm = ?, especialidade = ?, patologias_atendidas = ?, valor_consulta = ? WHERE id = ?",
+      [nome, crm, especialidade, patologias_atendidas, valor, req.params.id]
     );
-    res.json({ id: req.params.id, nome, crm, especialidade, patologias_atendidas });
+    res.json({ id: req.params.id, nome, crm, especialidade, patologias_atendidas, valor_consulta: valor });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -931,7 +933,10 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
           }).slice(0, 5);
 
           if (slots.length > 0) {
-            let listStr = `Encontrei os seguintes horários livres com *${matchMed.nome}* (${matchMed.especialidade}):\n\n`;
+            const valorConsulta = (matchMed.valor_consulta !== null && matchMed.valor_consulta !== undefined) ? matchMed.valor_consulta : 150.00;
+            const priceStr = chatState.temp_pagamento === 'particular' ? `\nValor da consulta: *R$ ${valorConsulta.toFixed(2)}*\n` : '';
+            
+            let listStr = `Encontrei os seguintes horários livres com *${matchMed.nome}* (${matchMed.especialidade}):${priceStr}\n`;
             slots.forEach((s, idx) => {
               const formattedDate = s.data.split('-').reverse().join('/');
               listStr += `${idx + 1} - ${formattedDate} às ${s.hora_inicio}h\n`;
@@ -961,7 +966,9 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
           responseTextBot = `Escolha inválida. Por favor, envie apenas o *número* correspondente da lista (de 1 a ${slots.length}):`;
         } else {
           const selectedSlot = slots[selectionIndex];
-          const valor = chatState.temp_pagamento === 'convenio' ? 0 : 150; // R$ 150 fixo simulado para particular
+          const medico = await dbGet("SELECT nome, especialidade, valor_consulta FROM Medicos WHERE id = ?", [chatState.temp_medico_id]);
+          const valorConsulta = (medico && medico.valor_consulta !== null && medico.valor_consulta !== undefined) ? medico.valor_consulta : 150.00;
+          const valor = chatState.temp_pagamento === 'convenio' ? 0 : valorConsulta;
 
           // 1. Criar agendamento com status 'solicitado' (Passo 4)
           const dataHoraAgend = `${selectedSlot.data} ${selectedSlot.hora_inicio}`;
@@ -982,10 +989,9 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
           await deleteChatState(whatsapp);
 
           // 4. Enviar mensagem de confirmação
-          const medico = await dbGet("SELECT nome, especialidade FROM Medicos WHERE id = ?", [chatState.temp_medico_id]);
           const formattedDate = selectedSlot.data.split('-').reverse().join('/');
           
-          responseTextBot = `Agendamento Solicitado com Sucesso! 📅🏥\n\n*Resumo do Agendamento*:\n• Paciente: *${paciente.nome}*\n• Médico: *${medico.nome}* (${medico.especialidade})\n• Data: *${formattedDate}* às *${selectedSlot.hora_inicio}h*\n• Tipo: *${chatState.temp_tipo === 'consulta' ? 'Consulta' : 'Exame'}*\n• Pagamento: *${chatState.temp_pagamento === 'convenio' ? 'Convênio' : 'Particular (R$ 150)'}*\n\nSeu agendamento foi registrado com status *Solicitado*. Te aguardamos em nossa clínica!`;
+          responseTextBot = `Agendamento Solicitado com Sucesso! 📅🏥\n\n*Resumo do Agendamento*:\n• Paciente: *${paciente.nome}*\n• Médico: *${medico.nome}* (${medico.especialidade})\n• Data: *${formattedDate}* às *${selectedSlot.hora_inicio}h*\n• Tipo: *${chatState.temp_tipo === 'consulta' ? 'Consulta' : 'Exame'}*\n• Pagamento: *${chatState.temp_pagamento === 'convenio' ? 'Convênio' : `Particular (R$ ${valor.toFixed(2)})`}*\n\nSeu agendamento foi registrado com status *Solicitado*. Te aguardamos em nossa clínica!`;
         }
       }
     }

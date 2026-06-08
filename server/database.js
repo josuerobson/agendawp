@@ -53,7 +53,8 @@ db.serialize(() => {
       nome TEXT NOT NULL,
       crm TEXT UNIQUE NOT NULL,
       especialidade TEXT NOT NULL,
-      patologias_atendidas TEXT
+      patologias_atendidas TEXT,
+      valor_consulta REAL DEFAULT 150.00
     )
   `);
 
@@ -128,6 +129,16 @@ db.serialize(() => {
     // Ignorar erro se a coluna já existe
     if (err && !err.message.includes('duplicate column name')) {
       console.error('Erro ao adicionar coluna sala_id a Medicos:', err.message);
+    }
+  });
+
+  // Adicionar coluna valor_consulta à tabela Medicos se não existir
+  db.run(`
+    ALTER TABLE Medicos ADD COLUMN valor_consulta REAL DEFAULT 150.00;
+  `, (err) => {
+    // Ignorar erro se a coluna já existe
+    if (err && !err.message.includes('duplicate column name')) {
+      console.error('Erro ao adicionar coluna valor_consulta a Medicos:', err.message);
     }
   });
 
@@ -243,13 +254,13 @@ async function seedDataSequential() {
 
     // 2. Inserir Medicos
     const medicos = [
-      ['Dr. Carlos Silva', 'CRM-SP 123456', 'Cardiologia', 'Hipertensão, Arritmia, Insuficiência Cardíaca, Infarto'],
-      ['Dra. Beatriz Santos', 'CRM-SP 234567', 'Pediatria', 'Asma Infantil, Bronquite, Dermatite, Crescimento'],
-      ['Dr. André Marques', 'CRM-SP 345678', 'Ortopedia', 'Tendinite, Hérnia de Disco, Fraturas, Artrose'],
-      ['Dra. Camila Nogueira', 'CRM-SP 456789', 'Endocrinologia', 'Diabetes Mellitus, Obesidade, Hipotireoidismo, Colesterol']
+      ['Dr. Carlos Silva', 'CRM-SP 123456', 'Cardiologia', 'Hipertensão, Arritmia, Insuficiência Cardíaca, Infarto', 180.00],
+      ['Dra. Beatriz Santos', 'CRM-SP 234567', 'Pediatria', 'Asma Infantil, Bronquite, Dermatite, Crescimento', 150.00],
+      ['Dr. André Marques', 'CRM-SP 345678', 'Ortopedia', 'Tendinite, Hérnia de Disco, Fraturas, Artrose', 200.00],
+      ['Dra. Camila Nogueira', 'CRM-SP 456789', 'Endocrinologia', 'Diabetes Mellitus, Obesidade, Hipotireoidismo, Colesterol', 160.00]
     ];
     for (const m of medicos) {
-      await dbRun('INSERT INTO Medicos (nome, crm, especialidade, patologias_atendidas) VALUES (?, ?, ?, ?)', m);
+      await dbRun('INSERT INTO Medicos (nome, crm, especialidade, patologias_atendidas, valor_consulta) VALUES (?, ?, ?, ?, ?)', m);
     }
     console.log('Medicos semeados.');
 
