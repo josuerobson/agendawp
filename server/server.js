@@ -635,12 +635,12 @@ app.get('/api/whatsapp/chats', async (req, res) => {
     const chats = await dbAll(`
       SELECT 
         w.whatsapp_destino as numero, 
-        p.nome as paciente_nome,
+        COALESCE(p.nome, 'Novo Lead (' || w.whatsapp_destino || ')') as paciente_nome,
         p.id as paciente_id,
         MAX(w.data_envio) as ultima_data,
         (SELECT mensagem FROM WhatsappMensagens WHERE whatsapp_destino = w.whatsapp_destino ORDER BY data_envio DESC LIMIT 1) as ultima_mensagem
       FROM WhatsappMensagens w
-      JOIN Pacientes p ON w.whatsapp_destino = p.whatsapp
+      LEFT JOIN Pacientes p ON w.whatsapp_destino = p.whatsapp
       GROUP BY w.whatsapp_destino
       ORDER BY ultima_data DESC
     `);
