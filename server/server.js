@@ -1156,8 +1156,19 @@ app.get('/api/pacientes/:id/historico-atendimentos', async (req, res) => {
   }
 });
 
+// Servir arquivos estáticos do frontend (React build) em produção
+const distPath = path.join(__dirname, '../dist');
+app.use(express.static(distPath));
+
+// Fallback para index.html do React (Single Page Application routing)
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
-
   console.log(`Backend server rodando na porta ${PORT}`);
 });

@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postinstall": "npm install --prefix server",
+    "start": "node server/server.js"
   },
   "dependencies": {
     "lucide-react": "^1.17.0",
