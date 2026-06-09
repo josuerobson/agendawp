@@ -844,10 +844,34 @@ const processGeminiChatbot = async (whatsapp, respostaText, paciente, chatState,
       "SELECT mensagem, status_envio FROM WhatsappMensagens WHERE whatsapp_destino = ? ORDER BY id DESC LIMIT 10",
       [whatsapp]
     );
-    const chatHistory = historyRows.reverse().map(row => ({
-      role: row.status_envio === 'recebida' ? 'user' : 'model',
-      parts: [{ text: row.mensagem }]
-    }));
+    
+    // Agrupar mensagens consecutivas com a mesma role para evitar erro 400 Bad Request da API do Gemini
+    const chatHistory = [];
+    historyRows.reverse().forEach(row => {
+      const role = row.status_envio === 'recebida' ? 'user' : 'model';
+      
+      if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === role) {
+        chatHistory[chatHistory.length - 1].parts[0].text += "\n" + row.mensagem;
+      } else {
+        chatHistory.push({
+          role: role,
+          parts: [{ text: row.mensagem }]
+        });
+      }
+    });
+
+    // Garantir que a lista termine com uma mensagem de 'user'
+    if (chatHistory.length === 0) {
+      chatHistory.push({
+        role: 'user',
+        parts: [{ text: respostaText }]
+      });
+    } else if (chatHistory[chatHistory.length - 1].role !== 'user') {
+      chatHistory.push({
+        role: 'user',
+        parts: [{ text: respostaText }]
+      });
+    }
 
     // 5. Montar estado atual mesclando o banco e o ChatState
     const stateData = {
@@ -918,22 +942,8 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
   - "slot_id": ID numérico correspondente do horário escolhido da lista de slots disponíveis, SOMENTE quando o paciente selecionar claramente uma data/hora da lista.
 `;
 
-    // 7. Preparar o corpo da requisição para o Gemini
-    const contents = [...chatHistory];
-    
-    // Garantir que a última mensagem do usuário esteja presente nos contents
-    const lastUserMessage = {
-      role: 'user',
-      parts: [{ text: respostaText }]
-    };
-    
-    // Se a última mensagem do histórico já for a mesma do usuário, não duplica
-    if (contents.length === 0 || contents[contents.length - 1].parts[0].text !== respostaText) {
-      contents.push(lastUserMessage);
-    }
-
     const payload = {
-      contents: contents,
+      contents: chatHistory,
       systemInstruction: {
         parts: [{ text: contextualInstruction }]
       },
@@ -1084,6 +1094,13 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
 
   } catch (err) {
     console.error(`[AI Bot] Erro geral ao processar com Gemini para ${whatsapp}:`, err);
+    try {
+      const fs = require('fs');
+      const logMsg = `[${new Date().toISOString()}] WhatsApp: ${whatsapp} | Error: ${err.message} | Stack: ${err.stack}\n`;
+      fs.appendFileSync(path.join(__dirname, 'gemini_error.log'), logMsg);
+    } catch (fsErr) {
+      console.error("Erro ao gravar gemini_error.log:", fsErr);
+    }
     return { success: false };
   }
 };
