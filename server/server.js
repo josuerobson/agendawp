@@ -730,6 +730,8 @@ const deleteChatState = (whatsapp) => dbRun("DELETE FROM ChatState WHERE whatsap
 // Simular uma resposta do paciente via WhatsApp com fluxo de IA Conversacional (Cérebro do Bot)
 app.post('/api/whatsapp/sim-reply', async (req, res) => {
   const { whatsapp, respostaText } = req.body;
+  console.log(`[Webhook sim-reply] Recebido no backend: whatsapp="${whatsapp}", respostaText="${respostaText}"`);
+  
   if (!whatsapp || !respostaText) {
     return res.status(400).json({ error: 'WhatsApp e texto de resposta são obrigatórios' });
   }
@@ -1034,6 +1036,8 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
 // Enviar uma mensagem manual da clínica para o paciente (agente humano)
 app.post('/api/whatsapp/enviar', async (req, res) => {
   const { whatsapp, mensagem } = req.body;
+  console.log(`[Painel Enviar] Enviando mensagem manual para: whatsapp="${whatsapp}", mensagem="${mensagem}"`);
+  
   if (!whatsapp || !mensagem) {
     return res.status(400).json({ error: 'WhatsApp e mensagem são obrigatórios' });
   }
