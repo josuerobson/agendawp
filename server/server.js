@@ -801,6 +801,293 @@ const validateName = (cleanedName) => {
   return { valid: true };
 };
 
+// Função auxiliar para limpar blocos de código markdown que a IA possa retornar
+const cleanJsonString = (str) => {
+  let cleaned = str.trim();
+  if (cleaned.startsWith("```json")) {
+    cleaned = cleaned.substring(7);
+  } else if (cleaned.startsWith("```")) {
+    cleaned = cleaned.substring(3);
+  }
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.substring(0, cleaned.length - 3);
+  }
+  return cleaned.trim();
+};
+
+// Processar resposta do paciente via IA do Google Gemini com histórico e contexto dinâmico
+const processGeminiChatbot = async (whatsapp, respostaText, paciente, chatState, apiKey, model, systemInstruction, clinicaName) => {
+  try {
+    // 1. Obter Médicos Ativos
+    const medicos = await dbAll("SELECT id, nome, especialidade, patologias_atendidas, valor_consulta FROM Medicos");
+
+    // 2. Obter Convênios Ativos
+    const convenios = await dbAll("SELECT id, nome_plano FROM Convenios WHERE status_ativo = 1");
+
+    // 3. Obter slots disponíveis futuros (próximos 30 dias)
+    const brTime = getBrazilTime();
+    const dbSlots = await dbAll(
+      "SELECT d.id, d.data, d.hora_inicio, m.nome as medico_nome, m.especialidade FROM Disponibilidade d JOIN Medicos m ON d.medico_id = m.id WHERE d.data >= ? AND d.status_disponivel = 1 ORDER BY d.data ASC, d.hora_inicio ASC LIMIT 50",
+      [brTime.dateStr]
+    );
+
+    // Filtrar horários com pelo menos 1 hora de antecedência em relação ao momento atual do Brasil
+    const slotsDisponiveis = dbSlots.filter(slot => {
+      const slotDate = new Date(`${slot.data}T${slot.hora_inicio}:00`);
+      const diffMs = slotDate.getTime() - brTime.fullDate.getTime();
+      const diffHours = diffMs / (1000 * 60 * 60);
+      return diffHours >= 1.0;
+    });
+
+    // 4. Buscar histórico de conversas do paciente (últimas 10 mensagens)
+    const historyRows = await dbAll(
+      "SELECT mensagem, status_envio FROM WhatsappMensagens WHERE whatsapp_destino = ? ORDER BY id DESC LIMIT 10",
+      [whatsapp]
+    );
+    const chatHistory = historyRows.reverse().map(row => ({
+      role: row.status_envio === 'recebida' ? 'user' : 'model',
+      parts: [{ text: row.mensagem }]
+    }));
+
+    // 5. Montar estado atual mesclando o banco e o ChatState
+    const stateData = {
+      nome: paciente ? paciente.nome : (chatState ? chatState.temp_nome : null),
+      cpf: paciente ? paciente.cpf : (chatState ? chatState.temp_cpf : null),
+      data_nascimento: paciente ? paciente.data_nascimento : (chatState ? chatState.temp_slots_json : null), // temp_slots_json armazena birthDate temporariamente para novos cadastros
+      tipo_atendimento: chatState ? chatState.temp_tipo : null,
+      tipo_pagamento: chatState ? chatState.temp_pagamento : null,
+      convenio_id: chatState ? chatState.temp_convenio_id : null,
+      medico_id: chatState ? chatState.temp_medico_id : null,
+    };
+
+    // Obter nome do convênio associado ao convenio_id se existir
+    let convenioNome = null;
+    if (stateData.convenio_id) {
+      const conv = convenios.find(c => c.id === stateData.convenio_id);
+      if (conv) convenioNome = conv.nome_plano;
+    }
+
+    // Obter nome do médico associado ao medico_id se existir
+    let medicoNome = null;
+    if (stateData.medico_id) {
+      const med = medicos.find(m => m.id === stateData.medico_id);
+      if (med) medicoNome = med.nome;
+    }
+
+    // 6. Criar instruções contextuais detalhadas para a IA
+    let customSystemInstruction = systemInstruction.replace(/{clinica}/g, clinicaName);
+
+    // Adicionar dados técnicos do sistema ao prompt do sistema para guiar a IA
+    const contextualInstruction = `${customSystemInstruction}
+
+---
+CONTEXTO E DADOS DO SISTEMA EM TEMPO REAL:
+1. Data/Hora Atual no Brasil (Brasília): ${brTime.dateStr} às ${brTime.timeStr} (Horário de Brasília). Use isto para saber o que significa "hoje", "amanhã", "esta semana", etc.
+2. Nome da Clínica: ${clinicaName}
+3. Paciente Já Cadastrado: ${paciente ? "SIM" : "NÃO"}
+4. Dados Coletados Atuais da Sessão:
+   - Nome do Paciente: ${stateData.nome || "(Ainda não coletado/não cadastrado)"}
+   - CPF do Paciente: ${stateData.cpf || "(Ainda não coletado/não cadastrado)"}
+   - Data de Nascimento: ${stateData.data_nascimento || "(Ainda não coletado/não cadastrado)"}
+   - Tipo de Atendimento: ${stateData.tipo_atendimento || "(Não definido)"}
+   - Forma de Pagamento: ${stateData.tipo_pagamento || "(Não definida)"}
+   - Convênio Selecionado: ${convenioNome || "(Nenhum)"}
+   - Médico Selecionado: ${medicoNome || "(Nenhum)"}
+
+5. Lista de Convênios Médicos Aceitos e seus IDs (Caso o paciente mencione um plano, você DEVE extrair o ID exato dele na resposta JSON):
+${JSON.stringify(convenios.map(c => ({ id: c.id, nome: c.nome_plano })))}
+
+6. Lista de Médicos Ativos, Especialidades, Patologias que tratam, Valor de Consulta Particular e seus IDs (Se o paciente indicar interesse ou sintomas relacionados, você DEVE sugerir o médico correspondente e extrair o ID dele no JSON):
+${JSON.stringify(medicos.map(m => ({ id: m.id, nome: m.nome, especialidade: m.especialidade, trata: m.patologias_atendidas || 'Clínica Geral', valor_consulta: m.valor_consulta })))}
+
+7. Lista de Horários/Slots Livres Disponíveis e seus IDs (Selecione somente os horários correspondentes ao médico que o paciente escolheu. Mostre apenas as datas e horários correspondentes ao médico de interesse na conversa. Você DEVE extrair o slot_id correto no JSON quando o paciente confirmar qual horário prefere):
+${JSON.stringify(slotsDisponiveis.map(s => ({ id: s.id, data: s.data.split('-').reverse().join('/'), hora: s.hora_inicio, medico_id: s.medico_id, medico_nome: s.medico_nome })))}
+
+INSTRUÇÕES DO SCHEMA DE RESPOSTA JSON:
+Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propriedades:
+- "respostaTextBot": O texto em linguagem natural simpático e humanizado que será enviado ao WhatsApp do paciente.
+- "solicitaIntervencaoHumana": Defina como true se o usuário pedir explicitamente para falar com um atendente humano, se expressar raiva/insatisfação extrema, ou se o assunto estiver fora do escopo de agendamentos.
+- "dadosExtraidos": Objeto contendo os dados identificados na conversa atual. Se não foram identificados ou não se aplicam, defina-os como null ou omita.
+  - "nome": Nome completo extraído se o paciente o informar agora ou se já estiver cadastrado.
+  - "cpf": CPF formatado ou limpo se informado agora ou se já cadastrado.
+  - "data_nascimento": Data de nascimento formatada como YYYY-MM-DD se informada.
+  - "tipo_atendimento": "consulta" ou "exame" se selecionado.
+  - "tipo_pagamento": "particular" ou "convenio" se selecionado.
+  - "convenio_id": ID numérico correspondente da lista de convênios se o paciente usar plano e o plano for aceito.
+  - "medico_id": ID numérico correspondente da lista de médicos se o paciente selecionar o médico ou especialidade.
+  - "slot_id": ID numérico correspondente do horário escolhido da lista de slots disponíveis, SOMENTE quando o paciente selecionar claramente uma data/hora da lista.
+`;
+
+    // 7. Preparar o corpo da requisição para o Gemini
+    const contents = [...chatHistory];
+    
+    // Garantir que a última mensagem do usuário esteja presente nos contents
+    const lastUserMessage = {
+      role: 'user',
+      parts: [{ text: respostaText }]
+    };
+    
+    // Se a última mensagem do histórico já for a mesma do usuário, não duplica
+    if (contents.length === 0 || contents[contents.length - 1].parts[0].text !== respostaText) {
+      contents.push(lastUserMessage);
+    }
+
+    const payload = {
+      contents: contents,
+      systemInstruction: {
+        parts: [{ text: contextualInstruction }]
+      },
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            respostaTextBot: { type: "STRING" },
+            solicitaIntervencaoHumana: { type: "BOOLEAN" },
+            dadosExtraidos: {
+              type: "OBJECT",
+              properties: {
+                nome: { type: "STRING" },
+                cpf: { type: "STRING" },
+                data_nascimento: { type: "STRING" },
+                tipo_atendimento: { type: "STRING" },
+                tipo_pagamento: { type: "STRING" },
+                convenio_id: { type: "INTEGER" },
+                medico_id: { type: "INTEGER" },
+                slot_id: { type: "INTEGER" }
+              }
+            }
+          },
+          required: ["respostaTextBot", "solicitaIntervencaoHumana"]
+        }
+      }
+    };
+
+    // 8. Chamar a API do Gemini via fetch nativo
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Erro na API do Gemini: ${res.status} - ${errorText}`);
+    }
+
+    const data = await res.json();
+    const botJsonResponseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    if (!botJsonResponseText) {
+      throw new Error("Resposta da IA vazia ou malformada.");
+    }
+
+    const result = JSON.parse(cleanJsonString(botJsonResponseText));
+    
+    // Logar dados extraídos
+    console.log(`[AI Bot] Resultado do Gemini:`, JSON.stringify(result));
+
+    // 9. Processar o retorno da IA no Banco de Dados
+    const dados = result.dadosExtraidos || {};
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    if (result.solicitaIntervencaoHumana) {
+      await setChatState(whatsapp, 'ATENDIMENTO_HUMANO');
+      console.log(`[AI Bot] Intervenção humana solicitada para ${whatsapp}.`);
+      await saveMessageAndNotifyN8N(null, whatsapp, result.respostaTextBot, 'lido', nowStr);
+      return { success: true, botReplied: result.respostaTextBot };
+    }
+
+    // Se o paciente ainda não existe no banco
+    if (!paciente) {
+      // Mesclar dados extraídos atuais com os que já tínhamos no ChatState
+      const nomeFinal = dados.nome || (chatState ? chatState.temp_nome : null);
+      let cpfFinal = dados.cpf || (chatState ? chatState.temp_cpf : null);
+      let birthFinal = dados.data_nascimento || (chatState ? chatState.temp_slots_json : null);
+
+      if (cpfFinal) cpfFinal = cpfFinal.replace(/\D/g, '');
+      
+      // Se tivermos todos os 3 campos essenciais, cadastramos o paciente no banco!
+      if (nomeFinal && cpfFinal && cpfFinal.length === 11 && birthFinal) {
+        console.log(`[AI Bot] Todos os dados coletados. Cadastrando paciente: ${nomeFinal}, CPF: ${cpfFinal}`);
+        
+        // Formatar data de nascimento caso venha no formato brasileiro (DD/MM/AAAA)
+        if (birthFinal.includes('/')) {
+          const parts = birthFinal.split('/');
+          if (parts.length === 3) birthFinal = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+
+        const insertResult = await dbRun(
+          "INSERT INTO Pacientes (nome, cpf, whatsapp, data_nascimento, convenio_id) VALUES (?, ?, ?, ?, ?)",
+          [nomeFinal, cpfFinal, whatsapp, birthFinal, dados.convenio_id || null]
+        );
+        paciente = { id: insertResult.id, nome: nomeFinal, whatsapp, cpf: cpfFinal, data_nascimento: birthFinal, convenio_id: dados.convenio_id || null };
+        console.log(`[AI Bot] Paciente cadastrado com ID: ${paciente.id}`);
+      } else {
+        // Se ainda faltam dados para o cadastro, atualiza o ChatState para continuar a triagem
+        await setChatState(whatsapp, 'AWAITING_NAME', {
+          nome: nomeFinal,
+          cpf: cpfFinal,
+          tipo: dados.tipo_atendimento || (chatState ? chatState.temp_tipo : null),
+          pagamento: dados.tipo_pagamento || (chatState ? chatState.temp_pagamento : null),
+          convenio_id: dados.convenio_id || (chatState ? chatState.temp_convenio_id : null),
+          medico_id: dados.medico_id || (chatState ? chatState.temp_medico_id : null),
+          slots_json: birthFinal
+        });
+      }
+    }
+
+    // Se o paciente existe (ou acabou de ser criado) e escolheu o slot de agendamento!
+    if (paciente && dados.slot_id) {
+      // Verificar se o slot ainda está disponível
+      const slot = await dbGet("SELECT * FROM Disponibilidade WHERE id = ? AND status_disponivel = 1", [dados.slot_id]);
+      if (slot) {
+        console.log(`[AI Bot] Slot ${dados.slot_id} disponível. Criando agendamento para paciente ID: ${paciente.id}`);
+        
+        const medico = medicos.find(m => m.id === slot.medico_id);
+        const valorConsulta = medico ? (medico.valor_consulta !== null ? medico.valor_consulta : 150.00) : 150.00;
+        const tipoPagto = dados.tipo_pagamento || (chatState ? chatState.temp_pagamento : 'particular');
+        const valor = tipoPagto === 'convenio' ? 0 : valorConsulta;
+        const tipoAtendimento = dados.tipo_atendimento || (chatState ? chatState.temp_tipo : 'consulta');
+        
+        const dataHoraAgend = `${slot.data} ${slot.hora_inicio}`;
+
+        // Criar o agendamento
+        const insertAgend = await dbRun(
+          "INSERT INTO Agendamentos (paciente_id, medico_id, data_hora, tipo_atendimento, tipo_pagamento, valor_combinado, status_agendamento) VALUES (?, ?, ?, ?, ?, ?, 'solicitado')",
+          [paciente.id, slot.medico_id, dataHoraAgend, tipoAtendimento, tipoPagto, valor]
+        );
+
+        // Ocupar slot de disponibilidade
+        await dbRun("UPDATE Disponibilidade SET status_disponivel = 0 WHERE id = ?", [slot.id]);
+
+        // Limpar o ChatState de triagem
+        await deleteChatState(whatsapp);
+        console.log(`[AI Bot] Agendamento criado com ID: ${insertAgend.id} e slot ${slot.id} reservado.`);
+      } else {
+        console.log(`[AI Bot] Slot ${dados.slot_id} já está ocupado. IA precisará sugerir outro.`);
+      }
+    } else if (paciente) {
+      // Se paciente existe mas não selecionou slot ainda, atualiza o estado com os dados parciais do agendamento
+      await setChatState(whatsapp, 'AWAITING_SLOT_SELECTION', {
+        tipo: dados.tipo_atendimento || (chatState ? chatState.temp_tipo : null),
+        pagamento: dados.tipo_pagamento || (chatState ? chatState.temp_pagamento : null),
+        convenio_id: dados.convenio_id || (chatState ? chatState.temp_convenio_id : null),
+        medico_id: dados.medico_id || (chatState ? chatState.temp_medico_id : null)
+      });
+    }
+
+    // Salvar resposta no histórico e retornar
+    await saveMessageAndNotifyN8N(null, whatsapp, result.respostaTextBot, 'lido', nowStr);
+    return { success: true, botReplied: result.respostaTextBot };
+
+  } catch (err) {
+    console.error(`[AI Bot] Erro geral ao processar com Gemini para ${whatsapp}:`, err);
+    return { success: false };
+  }
+};
+
 // Simular uma resposta do paciente via WhatsApp com fluxo de IA Conversacional (Cérebro do Bot)
 app.post('/api/whatsapp/sim-reply', async (req, res) => {
   const { whatsapp, respostaText } = req.body;
@@ -870,8 +1157,29 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
       return res.json({ success: true, botReplied: null });
     }
 
+    // Interceptar e usar a IA do Gemini se a chave de API estiver configurada
+    const geminiKeyRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'gemini_api_key'");
+    const geminiModelRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'gemini_model'");
+    const geminiPromptRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'bot_system_instruction'");
+    const clinicaNameRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'nome_clinica'");
+
+    const geminiApiKey = geminiKeyRow ? geminiKeyRow.valor : '';
+    const geminiModel = (geminiModelRow && geminiModelRow.valor) ? geminiModelRow.valor : 'gemini-1.5-flash';
+    const systemInstruction = geminiPromptRow ? geminiPromptRow.valor : '';
+    const clinicaName = clinicaNameRow ? clinicaNameRow.valor : 'Agenda WP';
+
+    if (geminiApiKey && geminiApiKey.trim() !== '') {
+      console.log(`[AI Bot] Iniciando processamento com Gemini (${geminiModel}) para o número ${whatsapp}`);
+      const aiReply = await processGeminiChatbot(whatsapp, respostaText, paciente, chatState, geminiApiKey, geminiModel, systemInstruction, clinicaName);
+      if (aiReply.success) {
+        return res.json({ success: true, botReplied: aiReply.botReplied });
+      } else {
+        console.warn("[AI Bot] Falha no processamento com Gemini. Executando fallback para o chatbot clássico baseado em regras.");
+      }
+    }
+
     // ==========================================
-    // FLUXO DE CADASTRO DE NOVO PACIENTE (Se não cadastrado no banco)
+    // FLUXO DE CADASTRO DE NOVO PACIENTE (Se não cadastrado no banco) - FALLBACK CLÁSSICO
     // ==========================================
     if (!paciente) {
       if (!chatState) {

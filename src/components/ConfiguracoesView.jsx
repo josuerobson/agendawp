@@ -12,7 +12,10 @@ function ConfiguracoesView() {
     bot_ativo: '1',
     bot_mensagem_boas_vindas: '',
     lembrete_horario: '08:00',
-    lembrete_modelo: ''
+    lembrete_modelo: '',
+    gemini_api_key: '',
+    gemini_model: 'gemini-1.5-flash',
+    bot_system_instruction: ''
   });
 
   const [loading, setLoading] = useState(true);
@@ -280,10 +283,50 @@ function ConfiguracoesView() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Mensagem de Boas-vindas (Novos Números)</label>
+              <label className="form-label">Chave de API do Google Gemini (IA)</label>
+              <input
+                type="password"
+                className="form-control"
+                placeholder="Cole sua chave API do Google AI Studio..."
+                value={configs.gemini_api_key || ''}
+                onChange={(e) => handleInputChange('gemini_api_key', e.target.value)}
+              />
+              <span className="input-tip">Deixe em branco para usar o chatbot clássico por regras/máquina de estados.</span>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Modelo de IA (Gemini)</label>
+              <select
+                className="form-control"
+                value={configs.gemini_model || 'gemini-1.5-flash'}
+                onChange={(e) => handleInputChange('gemini_model', e.target.value)}
+              >
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Recomendado - Rápido e econômico)</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro (Mais inteligente - Maior latência)</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Instruções de IA / Persona (System Prompt)</label>
               <textarea
                 className="form-control text-area-large"
-                rows={5}
+                rows={10}
+                placeholder="Defina as regras de comportamento da assistente virtual..."
+                value={configs.bot_system_instruction || ''}
+                onChange={(e) => handleInputChange('bot_system_instruction', e.target.value)}
+              />
+              <div className="placeholders-helper">
+                <span>Tag dinâmica aceita: </span>
+                <code title="Nome da Clínica (definido em Identidade)">{"{clinica}"}</code>
+              </div>
+              <span className="input-tip">Essas instruções orientam o tom e o comportamento do assistente virtual ao interagir com o paciente.</span>
+            </div>
+
+            <div className="form-group" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', marginTop: '0.5rem' }}>
+              <label className="form-label">Mensagem de Boas-vindas (Chatbot Clássico)</label>
+              <textarea
+                className="form-control text-area-large"
+                rows={4}
                 placeholder="Ex: Olá! Seja bem-vindo à clínica..."
                 value={configs.bot_mensagem_boas_vindas}
                 onChange={(e) => handleInputChange('bot_mensagem_boas_vindas', e.target.value)}
@@ -292,6 +335,7 @@ function ConfiguracoesView() {
                 <span>Tag dinâmica aceita: </span>
                 <code title="Substituído pelo Nome da Clínica">{"{clinica}"}</code>
               </div>
+              <span className="input-tip">Esta mensagem é utilizada somente quando a IA está desativada ou sem chave configurada.</span>
             </div>
           </div>
 
