@@ -82,15 +82,20 @@ const saveMessageAndNotifyN8N = async (agendamento_id, whatsapp_destino, mensage
   const isAlert = status_envio === 'entregue' && mensagem.includes('Lembramos que seu agendamento');
   const eventType = isAlert ? 'alertas' : 'mensagens';
   
-  await triggerN8NWebhook(eventType, {
-    id: result.id,
-    agendamento_id,
-    whatsapp: whatsapp_destino,
-    mensagem,
-    status: status_envio,
-    data_envio,
-    timestamp: Date.now()
-  });
+  // Apenas notificar o N8N via webhook para mensagens que precisam ser ativamente enviadas por ele.
+  // Mensagens recebidas do paciente ('recebida') ou respostas automáticas de IA do bot ('lido')
+  // já estão no fluxo direto de entrada ou de resposta síncrona do próprio N8N, então não devem disparar webhook de saída.
+  if (status_envio === 'enviado' || status_envio === 'entregue') {
+    await triggerN8NWebhook(eventType, {
+      id: result.id,
+      agendamento_id,
+      whatsapp: whatsapp_destino,
+      mensagem,
+      status: status_envio,
+      data_envio,
+      timestamp: Date.now()
+    });
+  }
   
   return result;
 };
@@ -650,7 +655,7 @@ app.put('/api/agendamentos/:id/status', async (req, res) => {
     if (notifyMsg) {
       const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
       await saveMessageAndNotifyN8N(
-        agendamentoId, paciente.whatsapp, notifyMsg, 'lido', nowStr
+        agendamentoId, paciente.whatsapp, notifyMsg, 'enviado', nowStr
       );
     }
 
