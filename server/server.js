@@ -314,8 +314,23 @@ app.delete('/api/pacientes/:id', async (req, res) => {
 // ==========================================
 app.get('/api/medicos', async (req, res) => {
   try {
-    const rows = await dbAll("SELECT * FROM Medicos ORDER BY nome ASC");
-    res.json(rows);
+    const brTime = getBrazilTime();
+    const rows = await dbAll(`
+      SELECT 
+        m.*,
+        COALESCE(SUM(CASE WHEN d.status_disponivel = 1 AND d.data >= ? THEN 1 ELSE 0 END), 0) as slots_futuros
+      FROM Medicos m
+      LEFT JOIN Disponibilidade d ON m.id = d.medico_id
+      GROUP BY m.id
+      ORDER BY m.nome ASC
+    `, [brTime.dateStr]);
+    
+    const formatted = rows.map(r => ({
+      ...r,
+      slots_futuros: parseInt(r.slots_futuros || 0, 10)
+    }));
+    
+    res.json(formatted);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

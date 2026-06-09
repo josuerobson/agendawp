@@ -32,6 +32,22 @@ function App() {
   const [selectedPatientForBooking, setSelectedPatientForBooking] = useState(null);
   const [nomeClinica, setNomeClinica] = useState('Agenda WP');
 
+  // Alertas de médicos com pouca disponibilidade
+  const [medicos, setMedicos] = useState([]);
+  const [showAlertDropdown, setShowAlertDropdown] = useState(false);
+
+  const fetchMedicos = async () => {
+    try {
+      const res = await fetch('/api/medicos');
+      if (res.ok) {
+        const data = await res.json();
+        setMedicos(data);
+      }
+    } catch (err) {
+      console.error('Erro ao buscar médicos para alertas:', err);
+    }
+  };
+
   // Toggle Theme
   useEffect(() => {
     const root = document.documentElement;
@@ -69,6 +85,20 @@ function App() {
     window.addEventListener('config-updated', handleConfigUpdate);
     return () => window.removeEventListener('config-updated', handleConfigUpdate);
   }, []);
+
+  // Monitorar disponibilidade de médicos no mount e via eventos customizados
+  useEffect(() => {
+    fetchMedicos();
+
+    const handleMedicosUpdate = () => {
+      fetchMedicos();
+    };
+
+    window.addEventListener('medicos-updated', handleMedicosUpdate);
+    return () => window.removeEventListener('medicos-updated', handleMedicosUpdate);
+  }, []);
+
+  const lowAvailabilityMedicos = medicos.filter(m => m.slots_futuros <= 1);
 
   // Sidebar Menu Items
   const menuItems = [
@@ -147,6 +177,54 @@ function App() {
             <div className="status-indicator">
               <span className="dot pulse"></span>
               <span className="status-label">Integração WhatsApp Ativa</span>
+            </div>
+
+            {/* Sininho de Alerta de Disponibilidade */}
+            <div className="bell-alert-container">
+              <button 
+                className={`bell-alert-btn ${lowAvailabilityMedicos.length > 0 ? 'has-alerts' : ''}`}
+                onClick={() => setShowAlertDropdown(!showAlertDropdown)}
+                title="Alertas de Disponibilidade de Médicos"
+              >
+                <Bell size={20} />
+                {lowAvailabilityMedicos.length > 0 && (
+                  <span className="bell-alert-badge">{lowAvailabilityMedicos.length}</span>
+                )}
+              </button>
+
+              {showAlertDropdown && (
+                <div className="bell-alert-dropdown glass-panel animate-scale-up">
+                  <div className="dropdown-header">
+                    <h4>Alertas de Agenda</h4>
+                    {lowAvailabilityMedicos.length > 0 && (
+                      <span className="alert-count-label">{lowAvailabilityMedicos.length} crítico(s)</span>
+                    )}
+                  </div>
+                  <div className="dropdown-content">
+                    {lowAvailabilityMedicos.length === 0 ? (
+                      <p className="no-alerts-text">Tudo certo! Todos os médicos possuem horários disponíveis.</p>
+                    ) : (
+                      <div className="alerts-list">
+                        {lowAvailabilityMedicos.map(med => (
+                          <div key={med.id} className="alert-item">
+                            <div className="alert-item-header">
+                              <span className="med-name">{med.nome}</span>
+                              <span className="med-spec">{med.especialidade}</span>
+                            </div>
+                            <div className="alert-item-body">
+                              {med.slots_futuros === 0 ? (
+                                <span className="status-critical">Sem horários futuros cadastrados!</span>
+                              ) : (
+                                <span className="status-warning">Apenas {med.slots_futuros} horário futuro livre!</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             
             <img 
@@ -391,6 +469,169 @@ function App() {
           border: 2px solid var(--primary);
           object-fit: cover;
           box-shadow: var(--shadow-sm);
+        }
+
+        /* Sininho de Alerta */
+        .bell-alert-container {
+          position: relative;
+        }
+
+        .bell-alert-btn {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--border-color);
+          border-radius: 50%;
+          width: 40px;
+          height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          color: var(--text-secondary);
+          transition: all 0.2s ease;
+          position: relative;
+        }
+
+        .bell-alert-btn:hover {
+          color: var(--text-primary);
+          background: rgba(255, 255, 255, 0.1);
+          border-color: var(--text-muted);
+        }
+
+        .bell-alert-btn.has-alerts {
+          color: #f97316;
+          border-color: rgba(249, 115, 22, 0.3);
+          animation: wiggle 2s infinite;
+        }
+
+        @keyframes wiggle {
+          0%, 100% { transform: rotate(0); }
+          15% { transform: rotate(-15deg); }
+          30% { transform: rotate(10deg); }
+          45% { transform: rotate(-10deg); }
+          60% { transform: rotate(5deg); }
+          75% { transform: rotate(-5deg); }
+        }
+
+        .bell-alert-badge {
+          position: absolute;
+          top: -2px;
+          right: -2px;
+          background: #ef4444;
+          color: white;
+          font-size: 0.65rem;
+          font-weight: 700;
+          min-width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 4px;
+          border: 1px solid var(--bg-sidebar);
+        }
+
+        .bell-alert-dropdown {
+          position: absolute;
+          top: calc(100% + 10px);
+          right: 0;
+          width: 320px;
+          background: var(--bg-sidebar);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-md);
+          box-shadow: var(--shadow-lg);
+          z-index: 1000;
+          padding: 1rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .dropdown-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1px solid var(--border-color);
+          padding-bottom: 0.5rem;
+        }
+
+        .dropdown-header h4 {
+          font-size: 0.95rem;
+          font-weight: 700;
+          color: var(--text-primary);
+          margin: 0;
+        }
+
+        .alert-count-label {
+          font-size: 0.7rem;
+          background: rgba(239, 68, 68, 0.1);
+          color: #ef4444;
+          padding: 0.15rem 0.4rem;
+          border-radius: var(--radius-sm);
+          font-weight: 600;
+        }
+
+        .dropdown-content {
+          max-height: 250px;
+          overflow-y: auto;
+          margin-top: 0.5rem;
+        }
+
+        .no-alerts-text {
+          font-size: 0.8rem;
+          color: var(--text-secondary);
+          text-align: center;
+          padding: 1rem 0;
+          margin: 0;
+        }
+
+        .alerts-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        .alert-item {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-sm);
+          padding: 0.6rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .alert-item-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .med-name {
+          font-size: 0.85rem;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+
+        .med-spec {
+          font-size: 0.7rem;
+          color: var(--text-muted);
+        }
+
+        .alert-item-body {
+          margin-top: 0.1rem;
+        }
+
+        .status-critical {
+          font-size: 0.75rem;
+          color: #ef4444;
+          font-weight: 600;
+        }
+
+        .status-warning {
+          font-size: 0.75rem;
+          color: #f97316;
+          font-weight: 600;
         }
 
         @media (max-width: 992px) {

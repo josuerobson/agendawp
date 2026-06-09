@@ -108,6 +108,7 @@ function MedicosView() {
       
       setShowDoctorModal(false);
       fetchMedicos();
+      window.dispatchEvent(new CustomEvent('medicos-updated'));
     } catch (err) {
       setDoctorError(err.message);
     }
@@ -122,6 +123,7 @@ function MedicosView() {
         
         fetchMedicos();
         fetchDisponibilidades(); // Atualizar disponibilidades cascade deletadas
+        window.dispatchEvent(new CustomEvent('medicos-updated'));
       } catch (err) {
         alert(err.message);
       }
@@ -211,6 +213,8 @@ function MedicosView() {
 
       setShowSlotModal(false);
       fetchDisponibilidades();
+      fetchMedicos(); // Atualizar slots_futuros nos cards
+      window.dispatchEvent(new CustomEvent('medicos-updated'));
     } catch (err) {
       setSlotError(err.message);
     }
@@ -222,6 +226,8 @@ function MedicosView() {
         const res = await fetch(`/api/disponibilidade/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Erro ao remover horário');
         fetchDisponibilidades();
+        fetchMedicos(); // Atualizar slots_futuros nos cards
+        window.dispatchEvent(new CustomEvent('medicos-updated'));
       } catch (err) {
         alert(err.message);
       }
@@ -267,6 +273,12 @@ function MedicosView() {
                   <div className="info-row">
                     <span className="label">Especialidade:</span>
                     <span className="value spec-badge">{m.especialidade}</span>
+                  </div>
+                  <div className="info-row">
+                    <span className="label">Vagas Livres (Futuras):</span>
+                    <span className={`value slots-badge ${m.slots_futuros === 0 ? 'critical' : m.slots_futuros === 1 ? 'warning' : 'ok'}`}>
+                      {m.slots_futuros !== undefined ? m.slots_futuros : 0}
+                    </span>
                   </div>
                   <div className="info-row">
                     <span className="label">Valor Consulta:</span>
@@ -698,6 +710,31 @@ function MedicosView() {
           border-radius: var(--radius-sm);
           font-weight: 600;
           font-size: 0.8rem;
+        }
+
+        .slots-badge {
+          padding: 0.15rem 0.5rem;
+          border-radius: var(--radius-sm);
+          font-weight: 700;
+          font-size: 0.8rem;
+        }
+
+        .slots-badge.critical {
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.08);
+          border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .slots-badge.warning {
+          color: #f97316;
+          background: rgba(249, 115, 22, 0.08);
+          border: 1px solid rgba(249, 115, 22, 0.2);
+        }
+
+        .slots-badge.ok {
+          color: var(--primary);
+          background: rgba(14, 165, 233, 0.08);
+          border: 1px solid rgba(14, 165, 233, 0.2);
         }
 
         .path-text {
