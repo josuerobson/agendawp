@@ -677,7 +677,7 @@ app.get('/api/whatsapp/chats', async (req, res) => {
         (SELECT mensagem FROM WhatsappMensagens WHERE whatsapp_destino = w.whatsapp_destino ORDER BY data_envio DESC LIMIT 1) as ultima_mensagem
       FROM WhatsappMensagens w
       LEFT JOIN Pacientes p ON w.whatsapp_destino = p.whatsapp
-      GROUP BY w.whatsapp_destino
+      GROUP BY w.whatsapp_destino, p.nome, p.id
       ORDER BY ultima_data DESC
     `);
     res.json(chats);
