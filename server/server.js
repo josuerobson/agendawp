@@ -723,6 +723,17 @@ app.get('/api/whatsapp/chat/:numero', async (req, res) => {
   }
 });
 
+// Limpar todas as conversas do whatsapp e resetar chatbot
+app.post('/api/whatsapp/clear', async (req, res) => {
+  try {
+    await dbRun("DELETE FROM WhatsappMensagens");
+    await dbRun("DELETE FROM ChatState");
+    res.json({ success: true, message: 'Histórico de conversas e chatbot limpos com sucesso.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Helpers para controle de estado do Chatbot
 const getChatState = (whatsapp) => dbGet("SELECT * FROM ChatState WHERE whatsapp = ?", [whatsapp]);
 const setChatState = (whatsapp, state, data = {}) => {

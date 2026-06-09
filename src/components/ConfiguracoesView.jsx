@@ -77,6 +77,37 @@ function ConfiguracoesView() {
     }
   };
 
+  const [clearing, setClearing] = useState(false);
+
+  const handleClearConversations = async () => {
+    if (!window.confirm('Tem certeza absoluta que deseja apagar todo o histórico de conversas do WhatsApp e resetar a assistente virtual? Esta ação não pode ser desfeita.')) {
+      return;
+    }
+
+    setClearing(true);
+    setSuccess('');
+    setError('');
+
+    try {
+      const res = await fetch('/api/whatsapp/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Erro ao limpar conversas.');
+      }
+
+      setSuccess('Todo o histórico do WhatsApp e estados do chatbot foram apagados com sucesso! 🗑️✨');
+      setTimeout(() => setSuccess(''), 6000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setClearing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="glass-panel loading-container" style={{ padding: '3rem', textAlign: 'center' }}>
@@ -303,6 +334,45 @@ function ConfiguracoesView() {
                 <code title="Hora (HH:MM)">{"{hora}"}</code>
                 <code title="Nome da Clínica">{"{clinica}"}</code>
               </div>
+            </div>
+          </div>
+
+          {/* Card 5: Zona de Perigo / Manutenção */}
+          <div className="glass-panel config-card" style={{ border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+            <div className="card-header" style={{ borderBottom: '1px solid rgba(239, 68, 68, 0.1)' }}>
+              <AlertCircle className="card-icon" size={20} style={{ color: 'var(--error)' }} />
+              <h4 style={{ color: 'var(--error)' }}>Zona de Perigo</h4>
+            </div>
+
+            <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <label className="form-label">Limpar Histórico do WhatsApp</label>
+              <p className="input-tip" style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                Esta ação apagará permanentemente todas as mensagens enviadas e recebidas do WhatsApp, além de resetar o estado da assistente virtual (chatbot) para todos os números. Isso permite iniciar os testes do zero.
+              </p>
+              
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={handleClearConversations}
+                disabled={clearing}
+                style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid var(--error)',
+                  color: 'var(--error)',
+                  alignSelf: 'flex-start',
+                  padding: '0.65rem 1.25rem',
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  borderRadius: 'var(--radius-sm)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  transition: 'background 0.2s, transform 0.1s'
+                }}
+              >
+                {clearing ? 'Limpando...' : 'Apagar Histórico e Reiniciar Chatbot'}
+              </button>
             </div>
           </div>
 
