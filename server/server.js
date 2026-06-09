@@ -50,10 +50,19 @@ const triggerN8NWebhook = async (type, payload) => {
     const url = configRow ? configRow.valor : '';
     
     if (url && url.startsWith('http')) {
+      // Buscar a instancia configurada
+      const instRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'whatsapp_instancia'");
+      const instancia = instRow ? instRow.valor : 'instancia_principal';
+      
+      const payloadWithInstance = {
+        ...payload,
+        instancia
+      };
+
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payloadWithInstance)
       });
       console.log(`N8N webhook (${type}) disparado. Status: ${response.status}`);
     }
