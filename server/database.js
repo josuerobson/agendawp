@@ -1,201 +1,297 @@
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const path = require('path');
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'database.db');
 
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Erro ao conectar ao SQLite:', err.message);
-  } else {
-    console.log('Conectado ao banco de dados SQLite.');
+// Carregar variáveis de ambiente
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+const connectionString = process.env.DATABASE_URL || 'postgresql://agendawp:149agendaxl9@localhost:5432/agendawp';
+
+console.log('Conectando ao banco de dados PostgreSQL com URL:', connectionString.replace(/:([^:@]+)@/, ':****@'));
+
+const pool = new Pool({
+  connectionString,
+  ssl: connectionString && !connectionString.includes('localhost') && !connectionString.includes('127.0.0.1') && !connectionString.includes('host.docker.internal') ? { rejectUnauthorized: false } : false
+});
+
+pool.on('error', (err) => {
+  console.error('Erro inesperado no cliente PostgreSQL:', err);
+});
+
+// Helper para converter a sintaxe do SQLite "?" para PostgreSQL "$1, $2..."
+// E traduzir os INSERT OR REPLACE/IGNORE que são específicos do SQLite.
+function prepareQuery(sql) {
+  if (typeof sql !== 'string') return sql;
+  let cleanSql = sql.trim();
+
+  // 1. Converter placeholders "?" para "$1, $2..."
+  let index = 1;
+  cleanSql = cleanSql.replace(/\?/g, () => `$${index++}`);
+
+  // 2. Traduzir INSERT OR REPLACE e INSERT OR IGNORE do SQLite
+  // Caso 1: ChatState (Chave primária: whatsapp)
+  if (/^INSERT\s+OR\s+REPLACE\s+INTO\s+ChatState/i.test(cleanSql)) {
+    cleanSql = cleanSql.replace(
+      /^INSERT\s+OR\s+REPLACE\s+INTO\s+ChatState\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i,
+      (match, columnsStr, valuesStr) => {
+        const columns = columnsStr.split(',').map(c => c.trim());
+        const updates = columns
+          .filter(c => c.toLowerCase() !== 'whatsapp')
+          .map(c => `${c} = EXCLUDED.${c}`)
+          .join(', ');
+        return `INSERT INTO ChatState (${columnsStr}) VALUES (${valuesStr}) ON CONFLICT (whatsapp) DO UPDATE SET ${updates}`;
+      }
+    );
   }
-});
+  // Caso 2: Configuracoes (Chave primária: chave)
+  else if (/^INSERT\s+OR\s+REPLACE\s+INTO\s+Configuracoes/i.test(cleanSql)) {
+    cleanSql = cleanSql.replace(
+      /^INSERT\s+OR\s+REPLACE\s+INTO\s+Configuracoes/i,
+      'INSERT INTO Configuracoes'
+    ) + ' ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor';
+  }
+  // Caso 3: Configuracoes (Ignore)
+  else if (/^INSERT\s+OR\s+IGNORE\s+INTO\s+Configuracoes/i.test(cleanSql)) {
+    cleanSql = cleanSql.replace(
+      /^INSERT\s+OR\s+IGNORE\s+INTO\s+Configuracoes/i,
+      'INSERT INTO Configuracoes'
+    ) + ' ON CONFLICT (chave) DO NOTHING';
+  }
 
-// Helper para rodar query de inserção e retornar promessa
-const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
-  db.run(sql, params, function(err) {
-    if (err) reject(err);
-    else resolve(this);
-  });
-});
-
-// Habilitar chaves estrangeiras no SQLite e criar tabelas
-db.serialize(() => {
-  db.run('PRAGMA foreign_keys = ON;', (err) => {
-    if (err) console.error('Erro ao habilitar foreign keys:', err);
-  });
-
-  // Criar tabela de Convenios
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Convenios (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nome_plano TEXT NOT NULL,
-      status_ativo INTEGER DEFAULT 1
-    )
-  `);
-
-  // Criar tabela de Pacientes
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Pacientes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nome TEXT NOT NULL,
-      cpf TEXT UNIQUE NOT NULL,
-      whatsapp TEXT NOT NULL,
-      data_nascimento TEXT NOT NULL,
-      convenio_id INTEGER,
-      FOREIGN KEY (convenio_id) REFERENCES Convenios (id) ON DELETE SET NULL
-    )
-  `);
-
-  // Criar tabela de Medicos
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Medicos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nome TEXT NOT NULL,
-      crm TEXT UNIQUE NOT NULL,
-      especialidade TEXT NOT NULL,
-      patologias_atendidas TEXT,
-      valor_consulta REAL DEFAULT 150.00
-    )
-  `);
-
-  // Criar tabela de Disponibilidade
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Disponibilidade (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      medico_id INTEGER NOT NULL,
-      data TEXT NOT NULL,
-      hora_inicio TEXT NOT NULL,
-      status_disponivel INTEGER DEFAULT 1,
-      FOREIGN KEY (medico_id) REFERENCES Medicos (id) ON DELETE CASCADE
-    )
-  `);
-
-  // Criar tabela de Agendamentos
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Agendamentos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      paciente_id INTEGER NOT NULL,
-      medico_id INTEGER NOT NULL,
-      data_hora TEXT NOT NULL,
-      tipo_atendimento TEXT NOT NULL,
-      tipo_pagamento TEXT NOT NULL,
-      valor_combinado REAL NOT NULL DEFAULT 0.0,
-      status_agendamento TEXT NOT NULL DEFAULT 'pendente',
-      FOREIGN KEY (paciente_id) REFERENCES Pacientes (id) ON DELETE RESTRICT,
-      FOREIGN KEY (medico_id) REFERENCES Medicos (id) ON DELETE RESTRICT
-    )
-  `);
-
-  // Criar tabela de Mensagens de WhatsApp (para simulação)
-  db.run(`
-    CREATE TABLE IF NOT EXISTS WhatsappMensagens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      agendamento_id INTEGER,
-      whatsapp_destino TEXT NOT NULL,
-      mensagem TEXT NOT NULL,
-      status_envio TEXT DEFAULT 'pendente',
-      data_envio TEXT NOT NULL,
-      FOREIGN KEY (agendamento_id) REFERENCES Agendamentos (id) ON DELETE SET NULL
-    )
-  `);
-
-  // Criar tabela de Controle do Estado do Chat (para o Robô de IA)
-  db.run(`
-    CREATE TABLE IF NOT EXISTS ChatState (
-      whatsapp TEXT PRIMARY KEY,
-      estado TEXT NOT NULL,
-      temp_nome TEXT,
-      temp_cpf TEXT,
-      temp_tipo TEXT,
-      temp_pagamento TEXT,
-      temp_convenio_id INTEGER,
-      temp_medico_id INTEGER,
-      temp_slots_json TEXT
-    )
-  `);
-
-  // Criar tabela de Salas (Consultórios)
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Salas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nome TEXT NOT NULL
-    )
-  `);
-
-  // Adicionar coluna sala_id à tabela Medicos se não existir
-  db.run(`
-    ALTER TABLE Medicos ADD COLUMN sala_id INTEGER REFERENCES Salas(id) ON DELETE SET NULL;
-  `, (err) => {
-    // Ignorar erro se a coluna já existe
-    if (err && !err.message.includes('duplicate column name')) {
-      console.error('Erro ao adicionar coluna sala_id a Medicos:', err.message);
+  // 3. Adicionar "RETURNING id" para comandos INSERT que geram ID
+  // Tabelas com SERIAL ID: Convenios, Pacientes, Medicos, Disponibilidade, Agendamentos, WhatsappMensagens, Salas, Chamadas
+  // Ignoramos ChatState e Configuracoes que usam strings como chave primária
+  if (/^INSERT\s+INTO\s+/i.test(cleanSql)) {
+    const isExcluded = /ChatState|Configuracoes/i.test(cleanSql);
+    const alreadyHasReturning = /RETURNING/i.test(cleanSql);
+    if (!isExcluded && !alreadyHasReturning) {
+      cleanSql += ' RETURNING id';
     }
-  });
+  }
 
-  // Adicionar coluna valor_consulta à tabela Medicos se não existir
-  db.run(`
-    ALTER TABLE Medicos ADD COLUMN valor_consulta REAL DEFAULT 150.00;
-  `, (err) => {
-    // Ignorar erro se a coluna já existe
-    if (err && !err.message.includes('duplicate column name')) {
-      console.error('Erro ao adicionar coluna valor_consulta a Medicos:', err.message);
+  // 4. Ignorar comandos PRAGMA do SQLite
+  if (/^PRAGMA\s+/i.test(cleanSql)) {
+    return 'SELECT 1';
+  }
+
+  return cleanSql;
+}
+
+// Objeto que simula a interface do driver 'sqlite3'
+const db = {
+  get(sql, params, callback) {
+    if (typeof params === 'function') {
+      callback = params;
+      params = [];
     }
-  });
+    const cleanSql = prepareQuery(sql);
+    pool.query(cleanSql, params)
+      .then(res => {
+        if (typeof callback === 'function') {
+          callback(null, res.rows[0] || null);
+        }
+      })
+      .catch(err => {
+        console.error('Erro na query (get):', cleanSql, err);
+        if (typeof callback === 'function') {
+          callback(err);
+        }
+      });
+  },
 
-  // Adicionar coluna observacoes à tabela Agendamentos se não existir
-  db.run(`
-    ALTER TABLE Agendamentos ADD COLUMN observacoes TEXT;
-  `, (err) => {
-    if (err && !err.message.includes('duplicate column name')) {
-      console.error('Erro ao adicionar coluna observacoes a Agendamentos:', err.message);
+  all(sql, params, callback) {
+    if (typeof params === 'function') {
+      callback = params;
+      params = [];
     }
-  });
+    const cleanSql = prepareQuery(sql);
+    pool.query(cleanSql, params)
+      .then(res => {
+        if (typeof callback === 'function') {
+          callback(null, res.rows || []);
+        }
+      })
+      .catch(err => {
+        console.error('Erro na query (all):', cleanSql, err);
+        if (typeof callback === 'function') {
+          callback(err);
+        }
+      });
+  },
 
-  // Adicionar coluna orientacoes_reagendamento à tabela Agendamentos se não existir
-  db.run(`
-    ALTER TABLE Agendamentos ADD COLUMN orientacoes_reagendamento TEXT;
-  `, (err) => {
-    if (err && !err.message.includes('duplicate column name')) {
-      console.error('Erro ao adicionar coluna orientacoes_reagendamento a Agendamentos:', err.message);
+  run(sql, params, callback) {
+    if (typeof params === 'function') {
+      callback = params;
+      params = [];
     }
-  });
+    const cleanSql = prepareQuery(sql);
+    pool.query(cleanSql, params)
+      .then(res => {
+        const lastID = res.rows && res.rows[0] && res.rows[0].id !== undefined ? parseInt(res.rows[0].id, 10) : null;
+        const changes = res.rowCount;
+        if (typeof callback === 'function') {
+          callback.call({ lastID, changes }, null);
+        }
+      })
+      .catch(err => {
+        console.error('Erro na query (run):', cleanSql, err);
+        if (typeof callback === 'function') {
+          callback(err);
+        }
+      });
+  },
 
-  // Criar tabela de Chamadas (Painel de Senha)
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Chamadas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      agendamento_id INTEGER,
-      paciente_nome TEXT NOT NULL,
-      medico_nome TEXT NOT NULL,
-      sala_nome TEXT NOT NULL,
-      data_hora TEXT NOT NULL,
-      FOREIGN KEY (agendamento_id) REFERENCES Agendamentos(id) ON DELETE SET NULL
-    )
-  `);
+  serialize(callback) {
+    callback();
+  },
 
-  // Criar tabela de Configuracoes
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Configuracoes (
-      chave TEXT PRIMARY KEY,
-      valor TEXT
-    )
-  `);
+  close(callback) {
+    pool.end(callback);
+  }
+};
 
-  console.log('Tabelas de banco de dados verificadas/criadas.');
+// Inicialização sequencial e assíncrona do esquema das tabelas
+async function initDatabase() {
+  try {
+    console.log('Iniciando criação de tabelas PostgreSQL...');
 
-  // Verificar e semear Salas de forma independente
-  db.get('SELECT COUNT(*) as count FROM Salas', (err, row) => {
-    if (!err && row && row.count === 0) {
-      db.run("INSERT INTO Salas (nome) VALUES ('Consultório 1')");
-      db.run("INSERT INTO Salas (nome) VALUES ('Consultório 2')");
-      db.run("INSERT INTO Salas (nome) VALUES ('Sala de Exames A')");
-      console.log('Salas semeadas de forma independente.');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Salas (
+        id SERIAL PRIMARY KEY,
+        nome TEXT NOT NULL
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Convenios (
+        id SERIAL PRIMARY KEY,
+        nome_plano TEXT NOT NULL,
+        status_ativo INTEGER DEFAULT 1
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Medicos (
+        id SERIAL PRIMARY KEY,
+        nome TEXT NOT NULL,
+        crm TEXT UNIQUE NOT NULL,
+        especialidade TEXT NOT NULL,
+        patologias_atendidas TEXT,
+        valor_consulta REAL DEFAULT 150.00,
+        sala_id INTEGER REFERENCES Salas(id) ON DELETE SET NULL
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Pacientes (
+        id SERIAL PRIMARY KEY,
+        nome TEXT NOT NULL,
+        cpf TEXT UNIQUE NOT NULL,
+        whatsapp TEXT NOT NULL,
+        data_nascimento TEXT NOT NULL,
+        convenio_id INTEGER REFERENCES Convenios (id) ON DELETE SET NULL
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Disponibilidade (
+        id SERIAL PRIMARY KEY,
+        medico_id INTEGER NOT NULL REFERENCES Medicos (id) ON DELETE CASCADE,
+        data TEXT NOT NULL,
+        hora_inicio TEXT NOT NULL,
+        status_disponivel INTEGER DEFAULT 1
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Agendamentos (
+        id SERIAL PRIMARY KEY,
+        paciente_id INTEGER NOT NULL REFERENCES Pacientes (id) ON DELETE RESTRICT,
+        medico_id INTEGER NOT NULL REFERENCES Medicos (id) ON DELETE RESTRICT,
+        data_hora TEXT NOT NULL,
+        tipo_atendimento TEXT NOT NULL,
+        tipo_pagamento TEXT NOT NULL,
+        valor_combinado REAL NOT NULL DEFAULT 0.0,
+        status_agendamento TEXT NOT NULL DEFAULT 'pendente',
+        observacoes TEXT,
+        orientacoes_reagendamento TEXT
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS WhatsappMensagens (
+        id SERIAL PRIMARY KEY,
+        agendamento_id INTEGER REFERENCES Agendamentos (id) ON DELETE SET NULL,
+        whatsapp_destino TEXT NOT NULL,
+        mensagem TEXT NOT NULL,
+        status_envio TEXT DEFAULT 'pendente',
+        data_envio TEXT NOT NULL
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ChatState (
+        whatsapp TEXT PRIMARY KEY,
+        estado TEXT NOT NULL,
+        temp_nome TEXT,
+        temp_cpf TEXT,
+        temp_tipo TEXT,
+        temp_pagamento TEXT,
+        temp_convenio_id INTEGER,
+        temp_medico_id INTEGER,
+        temp_slots_json TEXT
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Chamadas (
+        id SERIAL PRIMARY KEY,
+        agendamento_id INTEGER REFERENCES Agendamentos(id) ON DELETE SET NULL,
+        paciente_nome TEXT NOT NULL,
+        medico_nome TEXT NOT NULL,
+        sala_nome TEXT NOT NULL,
+        data_hora TEXT NOT NULL
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Configuracoes (
+        chave TEXT PRIMARY KEY,
+        valor TEXT
+      )
+    `);
+
+    // Adições de colunas (caso as tabelas já existam)
+    await pool.query(`
+      ALTER TABLE Medicos ADD COLUMN IF NOT EXISTS sala_id INTEGER REFERENCES Salas(id) ON DELETE SET NULL;
+    `).catch(() => {});
+
+    await pool.query(`
+      ALTER TABLE Medicos ADD COLUMN IF NOT EXISTS valor_consulta REAL DEFAULT 150.00;
+    `).catch(() => {});
+
+    await pool.query(`
+      ALTER TABLE Agendamentos ADD COLUMN IF NOT EXISTS observacoes TEXT;
+    `).catch(() => {});
+
+    await pool.query(`
+      ALTER TABLE Agendamentos ADD COLUMN IF NOT EXISTS orientacoes_reagendamento TEXT;
+    `).catch(() => {});
+
+    console.log('Estrutura de tabelas verificada com sucesso no PostgreSQL.');
+
+    // Semear salas se estiver vazio
+    const salasCount = await pool.query('SELECT COUNT(*) as count FROM Salas');
+    if (parseInt(salasCount.rows[0].count, 10) === 0) {
+      await pool.query("INSERT INTO Salas (nome) VALUES ('Consultório 1')");
+      await pool.query("INSERT INTO Salas (nome) VALUES ('Consultório 2')");
+      await pool.query("INSERT INTO Salas (nome) VALUES ('Sala de Exames A')");
+      console.log('Salas semeadas.');
     }
-  });
 
-  // Verificar e semear Configuracoes de forma independente
-  db.get('SELECT COUNT(*) as count FROM Configuracoes', (err, row) => {
-    if (!err && row && row.count === 0) {
+    // Semear configurações padrão se estiver vazio
+    const configCount = await pool.query('SELECT COUNT(*) as count FROM Configuracoes');
+    if (parseInt(configCount.rows[0].count, 10) === 0) {
       const defaultConfigs = [
         ['url_n8n_mensagens', ''],
         ['url_n8n_alertas', ''],
@@ -208,39 +304,27 @@ db.serialize(() => {
         ['lembrete_horario', '08:00'],
         ['lembrete_modelo', 'Olá *{paciente}*! 🏥\nLembramos que seu agendamento de *{tipo}* com *{medico}* está marcado para amanhã (*{data}*) às *{hora}h*.\n\nResponda *1* para *CONFIRMAR* ou *2* para *CANCELAR*.']
       ];
-      defaultConfigs.forEach(([chave, valor]) => {
-        db.run('INSERT OR IGNORE INTO Configuracoes (chave, valor) VALUES (?, ?)', [chave, valor]);
-      });
+      for (const [chave, valor] of defaultConfigs) {
+        await pool.query('INSERT INTO Configuracoes (chave, valor) VALUES ($1, $2) ON CONFLICT (chave) DO NOTHING', [chave, valor]);
+      }
       console.log('Configurações padrão semeadas.');
     }
-  });
 
-
-  // Verificar se já existem registros para evitar duplicar sementes
-  db.get('SELECT COUNT(*) as count FROM Convenios', (err, row) => {
-    if (err) {
-      console.error('Erro ao verificar dados existentes:', err);
-      return;
+    // Semear dados principais se Convenios estiver vazio
+    const conveniosCount = await pool.query('SELECT COUNT(*) as count FROM Convenios');
+    if (parseInt(conveniosCount.rows[0].count, 10) === 0) {
+      await seedDataSequential();
     }
 
-    if (row.count === 0) {
-      console.log('Banco de dados vazio. Iniciando semeadura de dados sequencial...');
-      seedDataSequential();
-    } else {
-      console.log('Banco de dados já contém registros. Pulando semeadura.');
-    }
-  });
-});
+  } catch (error) {
+    console.error('Erro ao inicializar esquema do PostgreSQL:', error);
+  }
+}
 
 async function seedDataSequential() {
   try {
-    // 0. Inserir Salas
-    await dbRun("INSERT INTO Salas (nome) VALUES ('Consultório 1')");
-    await dbRun("INSERT INTO Salas (nome) VALUES ('Consultório 2')");
-    await dbRun("INSERT INTO Salas (nome) VALUES ('Sala de Exames A')");
-    console.log('Salas semeadas.');
+    console.log('Iniciando semeadura de dados no PostgreSQL...');
 
-    // 1. Inserir Convenios
     const convenios = [
       ['Unimed Nacional', 1],
       ['Amil Fácil', 1],
@@ -248,11 +332,9 @@ async function seedDataSequential() {
       ['SulAmérica Exclusivo', 0]
     ];
     for (const c of convenios) {
-      await dbRun('INSERT INTO Convenios (nome_plano, status_ativo) VALUES (?, ?)', c);
+      await pool.query('INSERT INTO Convenios (nome_plano, status_ativo) VALUES ($1, $2)', c);
     }
-    console.log('Convenios semeados.');
 
-    // 2. Inserir Medicos
     const medicos = [
       ['Dr. Carlos Silva', 'CRM-SP 123456', 'Cardiologia', 'Hipertensão, Arritmia, Insuficiência Cardíaca, Infarto', 180.00],
       ['Dra. Beatriz Santos', 'CRM-SP 234567', 'Pediatria', 'Asma Infantil, Bronquite, Dermatite, Crescimento', 150.00],
@@ -260,11 +342,9 @@ async function seedDataSequential() {
       ['Dra. Camila Nogueira', 'CRM-SP 456789', 'Endocrinologia', 'Diabetes Mellitus, Obesidade, Hipotireoidismo, Colesterol', 160.00]
     ];
     for (const m of medicos) {
-      await dbRun('INSERT INTO Medicos (nome, crm, especialidade, patologias_atendidas, valor_consulta) VALUES (?, ?, ?, ?, ?)', m);
+      await pool.query('INSERT INTO Medicos (nome, crm, especialidade, patologias_atendidas, valor_consulta) VALUES ($1, $2, $3, $4, $5)', m);
     }
-    console.log('Medicos semeados.');
 
-    // 3. Inserir Pacientes
     const pacientes = [
       ['João Pedro Alves', '123.456.789-00', '5511999998888', '1985-05-15', 1],
       ['Mariana Costa Dias', '234.567.890-11', '5511988887777', '1992-10-22', 2],
@@ -272,44 +352,37 @@ async function seedDataSequential() {
       ['Juliana M. Vieira', '456.789.012-33', '5511966665555', '1988-12-01', 3]
     ];
     for (const p of pacientes) {
-      await dbRun('INSERT INTO Pacientes (nome, cpf, whatsapp, data_nascimento, convenio_id) VALUES (?, ?, ?, ?, ?)', p);
+      await pool.query('INSERT INTO Pacientes (nome, cpf, whatsapp, data_nascimento, convenio_id) VALUES ($1, $2, $3, $4, $5)', p);
     }
-    console.log('Pacientes semeados.');
 
-    // 4. Inserir Disponibilidade
     const hoje = '2026-06-08';
     const amanha = '2026-06-09';
     const depois = '2026-06-10';
 
     const disponibilidades = [
-      [1, hoje, '09:00', 0], // Reservado
+      [1, hoje, '09:00', 0],
       [1, hoje, '10:00', 1],
       [1, hoje, '11:00', 1],
       [1, amanha, '09:00', 1],
       [1, amanha, '10:00', 1],
       [1, depois, '14:00', 1],
-      
-      [2, hoje, '14:00', 0], // Reservado
+      [2, hoje, '14:00', 0],
       [2, hoje, '15:00', 1],
       [2, amanha, '14:00', 1],
       [2, amanha, '16:00', 1],
-      
       [3, hoje, '10:00', 1],
-      [3, hoje, '11:00', 0], // Reservado
+      [3, hoje, '11:00', 0],
       [3, amanha, '10:00', 1],
       [3, depois, '11:00', 1],
-      
       [4, hoje, '09:00', 1],
-      [4, hoje, '14:00', 0], // Reservado
+      [4, hoje, '14:00', 0],
       [4, amanha, '09:00', 1],
       [4, amanha, '15:00', 1]
     ];
     for (const d of disponibilidades) {
-      await dbRun('INSERT INTO Disponibilidade (medico_id, data, hora_inicio, status_disponivel) VALUES (?, ?, ?, ?)', d);
+      await pool.query('INSERT INTO Disponibilidade (medico_id, data, hora_inicio, status_disponivel) VALUES ($1, $2, $3, $4)', d);
     }
-    console.log('Disponibilidades semeadas.');
 
-    // 5. Inserir Agendamentos
     const agendamentos = [
       [1, 1, `${hoje} 09:00`, 'consulta', 'convenio', 120.00, 'confirmado'],
       [2, 2, `${hoje} 14:00`, 'consulta', 'convenio', 150.00, 'pendente'],
@@ -317,11 +390,9 @@ async function seedDataSequential() {
       [4, 4, `${hoje} 14:00`, 'consulta', 'convenio', 180.00, 'cancelado']
     ];
     for (const a of agendamentos) {
-      await dbRun('INSERT INTO Agendamentos (paciente_id, medico_id, data_hora, tipo_atendimento, tipo_pagamento, valor_combinado, status_agendamento) VALUES (?, ?, ?, ?, ?, ?, ?)', a);
+      await pool.query('INSERT INTO Agendamentos (paciente_id, medico_id, data_hora, tipo_atendimento, tipo_pagamento, valor_combinado, status_agendamento) VALUES ($1, $2, $3, $4, $5, $6, $7)', a);
     }
-    console.log('Agendamentos semeados.');
 
-    // 6. Inserir Mensagens de WhatsApp
     const mensagens = [
       [1, '5511999998888', 'Olá *João Pedro Alves*! 🏥\nSeu agendamento de *consulta* (Cardiologia) com *Dr. Carlos Silva* está marcado para o dia *08/06/2026* às *09:00*.\n\nResponda *CONFIRMAR* para confirmar sua presença ou *CANCELAR* para desmarcar.', 'lido', '2026-06-08 07:30:00'],
       [2, '5511988887777', 'Olá *Mariana Costa Dias*! 🏥\nSeu agendamento de *consulta* (Endocrinologia) com *Dra. Camila Nogueira* está marcado para o dia *08/06/2026* às *14:00*.\n\nResponda *CONFIRMAR* para confirmar sua presença ou *CANCELAR* para desmarcar.', 'entregue', '2026-06-08 08:00:00'],
@@ -329,14 +400,16 @@ async function seedDataSequential() {
       [4, '5511966665555', 'Olá *Juliana M. Vieira*! Seu agendamento de Endocrinologia com Dra. Camila Nogueira para 2026-06-08 às 14:00 foi CANCELADO conforme solicitado.', 'lido', '2026-06-08 08:15:00']
     ];
     for (const m of mensagens) {
-      await dbRun('INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES (?, ?, ?, ?, ?)', m);
+      await pool.query('INSERT INTO WhatsappMensagens (agendamento_id, whatsapp_destino, mensagem, status_envio, data_envio) VALUES ($1, $2, $3, $4, $5)', m);
     }
-    console.log('Mensagens de WhatsApp semeadas.');
-    console.log('Banco de dados semeado com sucesso!');
 
+    console.log('Dados semeados com sucesso no PostgreSQL!');
   } catch (error) {
-    console.error('Erro durante a semeadura de dados:', error);
+    console.error('Erro durante a semeadura de dados no PostgreSQL:', error);
   }
 }
+
+// Disparar a inicialização assíncrona em background
+initDatabase();
 
 module.exports = db;

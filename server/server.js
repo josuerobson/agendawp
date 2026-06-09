@@ -1,7 +1,12 @@
 const express = require('express');
 const cors = require('cors');
-const db = require('./database');
 const path = require('path');
+
+// Carregar variáveis de ambiente
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+const db = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -9,12 +14,10 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Garantir que foreign keys funcionem para cada conexão
+// No PostgreSQL, chaves estrangeiras já funcionam por padrão.
+// Mantemos o middleware de compatibilidade para evitar falhas de fluxo.
 app.use((req, res, next) => {
-  db.run('PRAGMA foreign_keys = ON;', (err) => {
-    if (err) console.error('Erro ao ativar foreign_keys por requisição:', err);
-    next();
-  });
+  next();
 });
 
 // Helper function to run DB queries with Promises
@@ -275,7 +278,8 @@ app.post('/api/pacientes', async (req, res) => {
     );
     res.status(201).json({ id: result.id, nome, cpf, whatsapp, data_nascimento, convenio_id });
   } catch (error) {
-    if (error.message.includes('UNIQUE constraint failed: Pacientes.cpf')) {
+    if (error.message.includes('UNIQUE constraint failed: Pacientes.cpf') || 
+        (error.code === '23505' && error.message.includes('cpf'))) {
       res.status(400).json({ error: 'Já existe um paciente cadastrado com este CPF.' });
     } else {
       res.status(500).json({ error: error.message });
@@ -330,7 +334,8 @@ app.post('/api/medicos', async (req, res) => {
     );
     res.status(201).json({ id: result.id, nome, crm, especialidade, patologias_atendidas, valor_consulta: valor });
   } catch (error) {
-    if (error.message.includes('UNIQUE constraint failed: Medicos.crm')) {
+    if (error.message.includes('UNIQUE constraint failed: Medicos.crm') || 
+        (error.code === '23505' && error.message.includes('crm'))) {
       res.status(400).json({ error: 'Já existe um médico cadastrado com este CRM.' });
     } else {
       res.status(500).json({ error: error.message });
