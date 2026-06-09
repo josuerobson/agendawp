@@ -5,6 +5,40 @@ import { Stethoscope, Plus, Trash2, Calendar, Clock, X, AlertCircle } from 'luci
 function MedicosView() {
   const [medicos, setMedicos] = useState([]);
   const [disponibilidades, setDisponibilidades] = useState([]);
+
+  // Sorting State for Availability Table
+  const [sortField, setSortField] = useState('data');
+  const [sortDirection, setSortDirection] = useState('asc');
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortIndicator = (field) => {
+    if (sortField !== field) return <span className="sort-indicator neutral">↕</span>;
+    return sortDirection === 'asc' ? 
+      <span className="sort-indicator active">▲</span> : 
+      <span className="sort-indicator active">▼</span>;
+  };
+
+  const sortedDisponibilidades = [...disponibilidades].sort((a, b) => {
+    let valA = a[sortField];
+    let valB = b[sortField];
+
+    if (typeof valA === 'string') {
+      valA = valA.toLowerCase();
+      valB = valB.toLowerCase();
+    }
+
+    if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+    if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
   const [loadingMedicos, setLoadingMedicos] = useState(true);
   const [loadingSlots, setLoadingSlots] = useState(true);
 
@@ -333,16 +367,16 @@ function MedicosView() {
               <table className="custom-table">
                 <thead>
                   <tr>
-                    <th>Médico</th>
-                    <th>Especialidade</th>
-                    <th>Data</th>
-                    <th>Horário</th>
-                    <th>Status</th>
+                    <th onClick={() => handleSort('medico_nome')} className="sortable-th">Médico {getSortIndicator('medico_nome')}</th>
+                    <th onClick={() => handleSort('especialidade')} className="sortable-th">Especialidade {getSortIndicator('especialidade')}</th>
+                    <th onClick={() => handleSort('data')} className="sortable-th">Data {getSortIndicator('data')}</th>
+                    <th onClick={() => handleSort('hora_inicio')} className="sortable-th">Horário {getSortIndicator('hora_inicio')}</th>
+                    <th onClick={() => handleSort('status_disponivel')} className="sortable-th">Status {getSortIndicator('status_disponivel')}</th>
                     <th style={{ textAlign: 'right' }}>Remover</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {disponibilidades.map((d) => (
+                  {sortedDisponibilidades.map((d) => (
                     <tr key={d.id}>
                       <td style={{ fontWeight: '600' }}>{d.medico_nome}</td>
                       <td>{d.especialidade}</td>
@@ -599,6 +633,28 @@ function MedicosView() {
           display: flex;
           flex-direction: column;
           gap: 2.5rem;
+        }
+
+        .sort-indicator {
+          font-size: 0.65rem;
+          margin-left: 0.4rem;
+          display: inline-block;
+          vertical-align: middle;
+        }
+        .sort-indicator.neutral {
+          opacity: 0.3;
+        }
+        .sort-indicator.active {
+          color: var(--primary);
+          opacity: 1;
+        }
+        .sortable-th {
+          cursor: pointer;
+          user-select: none;
+          transition: background 0.2s;
+        }
+        .sortable-th:hover {
+          background: rgba(255, 255, 255, 0.05);
         }
 
         .section-container {

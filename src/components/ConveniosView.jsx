@@ -5,6 +5,40 @@ function ConveniosView() {
   const [convenios, setConvenios] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Sorting State
+  const [sortField, setSortField] = useState('nome_plano');
+  const [sortDirection, setSortDirection] = useState('asc');
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortIndicator = (field) => {
+    if (sortField !== field) return <span className="sort-indicator neutral">↕</span>;
+    return sortDirection === 'asc' ? 
+      <span className="sort-indicator active">▲</span> : 
+      <span className="sort-indicator active">▼</span>;
+  };
+
+  const sortedConvenios = [...convenios].sort((a, b) => {
+    let valA = a[sortField];
+    let valB = b[sortField];
+
+    if (typeof valA === 'string') {
+      valA = valA.toLowerCase();
+      valB = valB.toLowerCase();
+    }
+
+    if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+    if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
+
   // Form State
   const [nomePlano, setNomePlano] = useState('');
   const [statusAtivo, setStatusAtivo] = useState(true);
@@ -134,16 +168,16 @@ function ConveniosView() {
           </div>
         ) : (
           <div className="table-container">
-            <table className="custom-table">
+             <table className="custom-table">
               <thead>
                 <tr>
-                  <th>Nome do Plano</th>
-                  <th>Status</th>
+                  <th onClick={() => handleSort('nome_plano')} className="sortable-th">Nome do Plano {getSortIndicator('nome_plano')}</th>
+                  <th onClick={() => handleSort('status_ativo')} className="sortable-th">Status {getSortIndicator('status_ativo')}</th>
                   <th style={{ textAlign: 'right' }}>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {convenios.map((c) => (
+                {sortedConvenios.map((c) => (
                   <tr key={c.id}>
                     <td style={{ fontWeight: '600' }}>
                       {editingId === c.id ? (
@@ -245,6 +279,28 @@ function ConveniosView() {
           grid-template-columns: 1.5fr 1fr;
           gap: 2rem;
           align-items: start;
+        }
+
+        .sort-indicator {
+          font-size: 0.65rem;
+          margin-left: 0.4rem;
+          display: inline-block;
+          vertical-align: middle;
+        }
+        .sort-indicator.neutral {
+          opacity: 0.3;
+        }
+        .sort-indicator.active {
+          color: var(--primary);
+          opacity: 1;
+        }
+        .sortable-th {
+          cursor: pointer;
+          user-select: none;
+          transition: background 0.2s;
+        }
+        .sortable-th:hover {
+          background: rgba(255, 255, 255, 0.05);
         }
 
         .list-panel {

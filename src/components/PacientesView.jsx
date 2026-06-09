@@ -5,6 +5,26 @@ function PacientesView({ onSchedulePatient }) {
   const [pacientes, setPacientes] = useState([]);
   const [convenios, setConvenios] = useState([]);
   const [search, setSearch] = useState('');
+
+  // Sorting State
+  const [sortField, setSortField] = useState('nome');
+  const [sortDirection, setSortDirection] = useState('asc');
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortIndicator = (field) => {
+    if (sortField !== field) return <span className="sort-indicator neutral">↕</span>;
+    return sortDirection === 'asc' ? 
+      <span className="sort-indicator active">▲</span> : 
+      <span className="sort-indicator active">▼</span>;
+  };
   
   // Form State
   const [showModal, setShowModal] = useState(false);
@@ -152,6 +172,25 @@ function PacientesView({ onSchedulePatient }) {
     p.cpf.includes(search)
   );
 
+  const sortedPacientes = [...filteredPacientes].sort((a, b) => {
+    let valA = a[sortField];
+    let valB = b[sortField];
+
+    if (sortField === 'convenio') {
+      valA = a.convenio_nome || 'particular';
+      valB = b.convenio_nome || 'particular';
+    }
+
+    if (typeof valA === 'string') {
+      valA = valA.toLowerCase();
+      valB = valB.toLowerCase();
+    }
+
+    if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+    if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
+
   const formatBirthday = (dateStr) => {
     if (!dateStr) return '';
     const parts = dateStr.split('-');
@@ -196,16 +235,16 @@ function PacientesView({ onSchedulePatient }) {
             <table className="custom-table">
               <thead>
                 <tr>
-                  <th>Nome</th>
-                  <th>CPF</th>
-                  <th>WhatsApp</th>
-                  <th>Nascimento</th>
-                  <th>Convênio</th>
+                  <th onClick={() => handleSort('nome')} className="sortable-th">Nome {getSortIndicator('nome')}</th>
+                  <th onClick={() => handleSort('cpf')} className="sortable-th">CPF {getSortIndicator('cpf')}</th>
+                  <th onClick={() => handleSort('whatsapp')} className="sortable-th">WhatsApp {getSortIndicator('whatsapp')}</th>
+                  <th onClick={() => handleSort('data_nascimento')} className="sortable-th">Nascimento {getSortIndicator('data_nascimento')}</th>
+                  <th onClick={() => handleSort('convenio')} className="sortable-th">Convênio {getSortIndicator('convenio')}</th>
                   <th style={{ textAlign: 'right' }}>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredPacientes.map((p) => (
+                {sortedPacientes.map((p) => (
                   <tr key={p.id}>
                     <td style={{ fontWeight: '600' }}>{p.nome}</td>
                     <td>{p.cpf}</td>
@@ -344,6 +383,28 @@ function PacientesView({ onSchedulePatient }) {
       )}
 
       <style>{`
+        .sort-indicator {
+          font-size: 0.65rem;
+          margin-left: 0.4rem;
+          display: inline-block;
+          vertical-align: middle;
+        }
+        .sort-indicator.neutral {
+          opacity: 0.3;
+        }
+        .sort-indicator.active {
+          color: var(--primary);
+          opacity: 1;
+        }
+        .sortable-th {
+          cursor: pointer;
+          user-select: none;
+          transition: background 0.2s;
+        }
+        .sortable-th:hover {
+          background: rgba(255, 255, 255, 0.05);
+        }
+
         .view-actions {
           display: flex;
           justify-content: space-between;
