@@ -736,6 +736,55 @@ const setChatState = (whatsapp, state, data = {}) => {
 };
 const deleteChatState = (whatsapp) => dbRun("DELETE FROM ChatState WHERE whatsapp = ?", [whatsapp]);
 
+// Lista de saudações comuns para triagem e humanização
+const GREETINGS = [
+  'BOM DIA', 'BOA TARDE', 'BOA NOITE', 'OLA', 'OLÁ', 'OI', 'OIE', 'HELLO', 'HI', 'COMO VAI', 'TUDO BEM',
+  'TUDO JOIA', 'TUDO BOM', 'COMO ESTA', 'COMO ESTÁ'
+];
+
+// Limpar saudações e termos comuns do input de nome para evitar cadastro inválido
+const cleanNameInput = (text) => {
+  let name = text.trim();
+  // Remover saudações no início (ex: "Olá Carlos", "Bom dia Carlos")
+  const greetingsRegex = /^(bom dia|boa tarde|boa noite|ola|olá|oi|oie|hello|hi)[,\s!.]*/i;
+  name = name.replace(greetingsRegex, '');
+  
+  // Remover expressões introdutórias comuns (ex: "meu nome é Carlos", "me chamo Carlos")
+  const introsRegex = /^(meu nome é|meu nome e|me chamo|sou o|sou a|aqui é|aqui e)[,\s]*/i;
+  name = name.replace(introsRegex, '');
+  
+  return name.trim();
+};
+
+// Validar se o nome limpo parece um nome completo e válido
+const validateName = (cleanedName) => {
+  if (!cleanedName) return { valid: false, reason: 'greeting_only' };
+  
+  // Verificar se possui números
+  if (/\d/.test(cleanedName)) {
+    return { valid: false, reason: 'has_numbers' };
+  }
+  
+  // Verificar se possui símbolos especiais não comuns em nomes
+  if (/[#@!$%^&*()_+={}\[\]:;\"'<>?~|\\\/]/.test(cleanedName)) {
+    return { valid: false, reason: 'has_symbols' };
+  }
+
+  const words = cleanedName.split(/\s+/).filter(w => w.length > 0);
+  
+  // Se for exatamente uma das saudações comuns (caso o regex de limpeza falhe)
+  if (words.length === 1 && GREETINGS.includes(words[0].toUpperCase())) {
+    return { valid: false, reason: 'greeting_only' };
+  }
+  
+  // Exigir pelo menos 2 palavras para ser considerado Nome Completo
+  if (words.length < 2) {
+    return { valid: false, reason: 'single_word' };
+  }
+  
+  return { valid: true };
+};
+
 // Simular uma resposta do paciente via WhatsApp com fluxo de IA Conversacional (Cérebro do Bot)
 app.post('/api/whatsapp/sim-reply', async (req, res) => {
   const { whatsapp, respostaText } = req.body;
@@ -822,26 +871,39 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
         responseTextBot = welcomeTemplate.replace(/{clinica}/g, clinicaName);
       } 
       else if (chatState.estado === 'AWAITING_NAME') {
-        // Nome recebido, pedir CPF
-        await setChatState(whatsapp, 'AWAITING_CPF', { nome: respostaText });
-        responseTextBot = `Prazer em conhecer você, *${respostaText}*! \nAgora, por favor, digite seu *CPF* (apenas números ou no formato 000.000.000-00):`;
+        const cleaned = cleanNameInput(respostaText);
+        const validation = validateName(cleaned);
+
+        if (!validation.valid) {
+          if (validation.reason === 'greeting_only') {
+            responseTextBot = 'Olá! 😊 Para podermos iniciar o seu cadastro, você poderia me informar o seu *nome completo* (nome e sobrenome), por favor?';
+          } else if (validation.reason === 'single_word') {
+            responseTextBot = 'Ah, para o cadastro preciso do seu *nome completo* (nome e sobrenome). Poderia digitar ele inteirinho para mim? 📝';
+          } else {
+            responseTextBot = 'Ops, parece que o nome digitado contém números ou caracteres especiais. 🧐 Por favor, digite apenas letras e espaços para o seu *nome completo*:';
+          }
+        } else {
+          // Nome recebido válido, pedir CPF
+          await setChatState(whatsapp, 'AWAITING_CPF', { nome: cleaned });
+          responseTextBot = `Prazer em conhecer você, *${cleaned}*! 🤝\nAgora, por favor, digite seu *CPF* (apenas números ou no formato 000.000.000-00):`;
+        }
       } 
       else if (chatState.estado === 'AWAITING_CPF') {
         // Validar CPF básico
         const cleanCpf = respostaText.replace(/\D/g, '');
         if (cleanCpf.length !== 11) {
-          responseTextBot = 'Formato de CPF inválido. Por favor, envie um CPF válido com 11 dígitos:';
+          responseTextBot = 'Desculpe, não consegui identificar um CPF válido com 11 dígitos. 🧐\n\nPor favor, digite novamente apenas os números do seu CPF (ou no formato 000.000.000-00):';
         } else {
           // Checar se CPF já existe no banco
           const checkCpf = await dbGet("SELECT id FROM Pacientes WHERE cpf = ?", [respostaText]);
           if (checkCpf) {
-            responseTextBot = 'Este CPF já está cadastrado em nosso sistema com outro número. Por favor, revise os dígitos ou digite um CPF diferente:';
+            responseTextBot = 'Identifiquei que este CPF já está cadastrado com outro contato em nosso sistema. 🏥\n\nPor favor, revise os dígitos ou digite um CPF diferente para prosseguir:';
           } else {
             await setChatState(whatsapp, 'AWAITING_BIRTHDAY', { 
               nome: chatState.temp_nome, 
               cpf: respostaText 
             });
-            responseTextBot = 'CPF recebido! Por fim, qual é a sua *data de nascimento*? (Digite no formato DD/MM/AAAA, ex: 15/05/1990):';
+            responseTextBot = 'CPF recebido com sucesso! 👍 Por fim, qual é a sua *data de nascimento*? (Digite no formato DD/MM/AAAA, ex: 15/05/1990):';
           }
         }
       } 
@@ -849,7 +911,7 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
         // Validar e formatar data
         const parts = respostaText.split('/');
         if (parts.length !== 3 || parts[0].length !== 2 || parts[1].length !== 2 || parts[2].length !== 4) {
-          responseTextBot = 'Formato de data inválido. Por favor, digite no formato DD/MM/AAAA (ex: 22/10/1992):';
+          responseTextBot = 'Ops, não consegui entender a data. 🗓️\n\nPor favor, digite sua data de nascimento no formato *DD/MM/AAAA* (exemplo: *15/05/1990*):';
         } else {
           const birthdayDb = `${parts[2]}-${parts[1]}-${parts[0]}`; // YYYY-MM-DD
           
