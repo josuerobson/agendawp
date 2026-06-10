@@ -844,6 +844,24 @@ const processGeminiChatbot = async (whatsapp, respostaText, paciente, chatState,
       "SELECT mensagem, status_envio FROM WhatsappMensagens WHERE whatsapp_destino = ? ORDER BY id DESC LIMIT 10",
       [whatsapp]
     );
+
+    // 4.5. Buscar agendamentos ativos do paciente no banco
+    let agendamentosAtivos = [];
+    if (paciente) {
+      try {
+        agendamentosAtivos = await dbAll(
+          `SELECT a.id, a.data_hora, a.tipo_atendimento, a.tipo_pagamento, a.status_agendamento, 
+                  m.nome as medico_nome, m.especialidade
+           FROM Agendamentos a
+           JOIN Medicos m ON a.medico_id = m.id
+           WHERE a.paciente_id = ? AND a.status_agendamento IN ('pendente', 'solicitado', 'confirmado')
+           ORDER BY a.data_hora ASC`,
+          [paciente.id]
+        );
+      } catch (err) {
+        console.error("Erro ao carregar agendamentos ativos para o prompt:", err);
+      }
+    }
     
     // Agrupar mensagens consecutivas com a mesma role para evitar erro 400 Bad Request da API do Gemini
     const chatHistory = [];
@@ -926,6 +944,24 @@ ${JSON.stringify(medicos.map(m => ({ id: m.id, nome: m.nome, especialidade: m.es
 
 7. Lista de Horários/Slots Livres Disponíveis e seus IDs (Selecione somente os horários correspondentes ao médico que o paciente escolheu. Mostre apenas as datas e horários correspondentes ao médico de interesse na conversa. Você DEVE extrair o slot_id correto no JSON quando o paciente confirmar qual horário prefere):
 ${JSON.stringify(slotsDisponiveis.map(s => ({ id: s.id, data: s.data.split('-').reverse().join('/'), hora: s.hora_inicio, medico_id: s.medico_id, medico_nome: s.medico_nome })))}
+
+8. Lista de Agendamentos Ativos do Paciente no Banco de Dados (Use isto para informar o paciente sobre as consultas/exames dele caso ele pergunte "quando é minha consulta?", "qual data está agendada?", etc.):
+${agendamentosAtivos.length > 0 
+  ? JSON.stringify(agendamentosAtivos.map(a => ({ data_hora: a.data_hora.split(' ').map((v, i) => i === 0 ? v.split('-').reverse().join('/') : v).join(' às '), tipo: a.tipo_atendimento, medico: a.medico_nome, especialidade: a.especialidade, status: a.status_agendamento }))) 
+  : "Nenhum agendamento ativo encontrado para este paciente."}
+
+REGRAS CRÍTICAS DE CONFIRMAÇÃO E INTEGRIDADE:
+* Você SOMENTE deve dizer ao paciente que um agendamento foi "confirmado", "marcado" ou "concluído" se você estiver preenchendo a propriedade "slot_id" com o ID numérico correto do slot correspondente na propriedade "dadosExtraidos" do JSON de retorno nesta mesma resposta.
+* Se você não estiver extraindo o "slot_id" no JSON (porque o slot não está disponível ou por qualquer outro motivo), você NÃO deve confirmar o agendamento no texto. Em vez disso, auxilie o paciente a escolher outro horário disponível da lista.
+* Nunca invente ou altere o convênio ou médico escolhido pelo paciente na hora da confirmação. Se ele escolheu Amil, confirme Amil. Se ele escolheu Dr. Josué, confirme Dr. Josué.
+
+REGRAS CRÍTICAS DE FORMATAÇÃO E ESPAÇAMENTO:
+* Escreva de forma curta e altamente legível para leitura no celular (WhatsApp).
+* NUNCA envie blocos grandes ou parágrafos densos de texto contínuo.
+* Divida suas respostas em parágrafos muito curtos (no máximo 2 frases por parágrafo).
+* Separe cada parágrafo obrigatoriamente com uma linha em branco (duas quebras de linha '\n\n') para que as mensagens fiquem bem espaçadas e leves.
+* Quando apresentar listas (como horários ou médicos), coloque cada opção em uma nova linha precedida por um emoji ou número correspondente.
+
 
 INSTRUÇÕES DO SCHEMA DE RESPOSTA JSON:
 Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propriedades:
@@ -1055,6 +1091,23 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
       }
     }
 
+    // Mismatch check: IA confirmou no texto mas não extraiu o slot_id
+    const confirmRegex = /(confirmad|agendamento realizad|marcado com sucess|consulta reservad|exame reservad|marcado para)/i;
+    if (paciente && confirmRegex.test(result.respostaTextBot) && !dados.slot_id) {
+      console.warn(`[AI Bot] Mismatch detectado: IA confirmou no texto mas não extraiu o slot_id. Sobrescrevendo resposta.`);
+      const pacienteNome = paciente.nome ? paciente.nome.split(' ')[0] : 'paciente';
+      result.respostaTextBot = `Desculpe, ${pacienteNome}! Houve uma pequena divergência técnica ao registrar o horário escolhido no banco de dados. 😔\n\nPor favor, selecione e digite novamente o horário desejado para que eu possa salvá-lo no sistema.`;
+      
+      // Forçar estado em AWAITING_SLOT_SELECTION
+      await setChatState(whatsapp, 'AWAITING_SLOT_SELECTION', {
+        tipo: dados.tipo_atendimento || (chatState ? chatState.temp_tipo : null),
+        pagamento: dados.tipo_pagamento || (chatState ? chatState.temp_pagamento : null),
+        convenio_id: dados.convenio_id || (chatState ? chatState.temp_convenio_id : null),
+        medico_id: dados.medico_id || (chatState ? chatState.temp_medico_id : null),
+        slots_json: chatState ? chatState.temp_slots_json : null
+      });
+    }
+
     // Se o paciente existe (ou acabou de ser criado) e escolheu o slot de agendamento!
     if (paciente && dados.slot_id) {
       // Verificar se o slot ainda está disponível
@@ -1083,7 +1136,18 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
         await deleteChatState(whatsapp);
         console.log(`[AI Bot] Agendamento criado com ID: ${insertAgend.id} e slot ${slot.id} reservado.`);
       } else {
-        console.log(`[AI Bot] Slot ${dados.slot_id} já está ocupado. IA precisará sugerir outro.`);
+        console.log(`[AI Bot] Slot ${dados.slot_id} já está ocupado. Sobrescrevendo resposta para solicitar novo horário.`);
+        const pacienteNome = paciente.nome ? paciente.nome.split(' ')[0] : 'paciente';
+        result.respostaTextBot = `Ops, desculpe, ${pacienteNome}! O horário escolhido acabou de ser reservado ou não está mais disponível no momento. 😔\n\nPor favor, escolha outro horário disponível da lista acima.`;
+        
+        // Manter estado em AWAITING_SLOT_SELECTION
+        await setChatState(whatsapp, 'AWAITING_SLOT_SELECTION', {
+          tipo: dados.tipo_atendimento || (chatState ? chatState.temp_tipo : null),
+          pagamento: dados.tipo_pagamento || (chatState ? chatState.temp_pagamento : null),
+          convenio_id: dados.convenio_id || (chatState ? chatState.temp_convenio_id : null),
+          medico_id: dados.medico_id || (chatState ? chatState.temp_medico_id : null),
+          slots_json: chatState ? chatState.temp_slots_json : null
+        });
       }
     } else if (paciente) {
       // Determinar o estado mais preciso com base nos dados que ainda faltam
