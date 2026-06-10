@@ -1720,6 +1720,111 @@ app.get('/api/pacientes/:id/historico-atendimentos', async (req, res) => {
   }
 });
 
+// Diagnóstico do Chatbot de IA Gemini
+app.get('/api/diagnose-ai', async (req, res) => {
+  try {
+    const configRows = await dbAll("SELECT * FROM Configuracoes");
+    const configs = {};
+    configRows.forEach(row => {
+      configs[row.chave] = row.valor;
+    });
+
+    const apiKey = configs['gemini_api_key'] || '';
+    const model = configs['gemini_model'] || 'gemini-1.5-flash';
+    const botAtivo = configs['bot_ativo'] === '1';
+    const systemInstruction = configs['bot_system_instruction'] || '';
+    const clinicaName = configs['nome_clinica'] || 'Agenda WP';
+
+    const diagnostics = {
+      serverVersion: '1.2.0-GeminiCorrectedHistory',
+      botAtivo: botAtivo,
+      geminiApiKeyConfigured: apiKey.trim() !== '',
+      geminiApiKeyLength: apiKey.trim().length,
+      geminiModel: model,
+      nomeClinica: clinicaName,
+      systemInstructionLength: systemInstruction.length,
+      internetAccess: false,
+      geminiApiConnection: 'not_tested',
+      error: null
+    };
+
+    // Testar acesso à internet e conexão com a API do Gemini
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const testRes = await fetch('https://generativelanguage.googleapis.com', {
+        method: 'GET',
+        signal: controller.signal
+      }).catch(() => null);
+      
+      clearTimeout(timeoutId);
+      diagnostics.internetAccess = true;
+      
+      if (testRes) {
+        diagnostics.geminiApiConnection = `reachable (Status: ${testRes.status})`;
+      } else {
+        diagnostics.geminiApiConnection = 'unreachable';
+      }
+    } catch (netErr) {
+      diagnostics.internetAccess = false;
+      diagnostics.geminiApiConnection = `failed: ${netErr.message}`;
+    }
+
+    // Testar chamada real com a chave se configurada
+    if (apiKey.trim() !== '') {
+      try {
+        const payload = {
+          contents: [{ role: 'user', parts: [{ text: 'Hello, this is a diagnostic test message.' }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                testOk: { type: "BOOLEAN" }
+              },
+              required: ["testOk"]
+            }
+          }
+        };
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          }
+        );
+
+        clearTimeout(timeoutId);
+        diagnostics.geminiApiHttpStatus = geminiRes.status;
+
+        if (geminiRes.ok) {
+          const resJson = await geminiRes.json();
+          diagnostics.geminiApiResult = 'success';
+          diagnostics.geminiApiResponseParsed = JSON.parse(resJson.candidates?.[0]?.content?.parts?.[0]?.text || '{}');
+        } else {
+          const resText = await geminiRes.text();
+          diagnostics.geminiApiResult = 'failed';
+          diagnostics.geminiApiErrorText = resText;
+        }
+      } catch (geminiErr) {
+        diagnostics.geminiApiResult = 'error';
+        diagnostics.geminiApiErrorText = geminiErr.message;
+      }
+    }
+
+    res.json(diagnostics);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Obter todas as configurações
 app.get('/api/configuracoes', async (req, res) => {
   try {
