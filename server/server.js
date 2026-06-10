@@ -1773,6 +1773,22 @@ app.get('/api/diagnose-ai', async (req, res) => {
 
     // Testar chamada real com a chave se configurada
     if (apiKey.trim() !== '') {
+      // 1. Consultar a lista de modelos disponíveis para esta chave de API
+      try {
+        const listRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+        );
+        if (listRes.ok) {
+          const listJson = await listRes.json();
+          diagnostics.availableModelsForThisKey = listJson.models?.map(m => m.name.replace('models/', '')) || [];
+        } else {
+          diagnostics.availableModelsError = await listRes.text();
+        }
+      } catch (listErr) {
+        diagnostics.availableModelsError = listErr.message;
+      }
+
+      // 2. Testar a geração de conteúdo
       try {
         const payload = {
           contents: [{ role: 'user', parts: [{ text: 'Hello, this is a diagnostic test message.' }] }],
