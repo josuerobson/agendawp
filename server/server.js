@@ -1035,8 +1035,15 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
         paciente = { id: insertResult.id, nome: nomeFinal, whatsapp, cpf: cpfFinal, data_nascimento: birthFinal, convenio_id: dados.convenio_id || null };
         console.log(`[AI Bot] Paciente cadastrado com ID: ${paciente.id}`);
       } else {
-        // Se ainda faltam dados para o cadastro, atualiza o ChatState para continuar a triagem
-        await setChatState(whatsapp, 'AWAITING_NAME', {
+        // Se ainda faltam dados para o cadastro, determina o estado correspondente
+        let estadoCadastro = 'AWAITING_NAME';
+        if (nomeFinal && !cpfFinal) {
+          estadoCadastro = 'AWAITING_CPF';
+        } else if (nomeFinal && cpfFinal && !birthFinal) {
+          estadoCadastro = 'AWAITING_BIRTHDAY';
+        }
+
+        await setChatState(whatsapp, estadoCadastro, {
           nome: nomeFinal,
           cpf: cpfFinal,
           tipo: dados.tipo_atendimento || (chatState ? chatState.temp_tipo : null),
@@ -1079,12 +1086,50 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
         console.log(`[AI Bot] Slot ${dados.slot_id} já está ocupado. IA precisará sugerir outro.`);
       }
     } else if (paciente) {
-      // Se paciente existe mas não selecionou slot ainda, atualiza o estado com os dados parciais do agendamento
-      await setChatState(whatsapp, 'AWAITING_SLOT_SELECTION', {
-        tipo: dados.tipo_atendimento || (chatState ? chatState.temp_tipo : null),
-        pagamento: dados.tipo_pagamento || (chatState ? chatState.temp_pagamento : null),
-        convenio_id: dados.convenio_id || (chatState ? chatState.temp_convenio_id : null),
-        medico_id: dados.medico_id || (chatState ? chatState.temp_medico_id : null)
+      // Determinar o estado mais preciso com base nos dados que ainda faltam
+      let proximoEstado = 'AWAITING_SLOT_SELECTION';
+      
+      const tipoAtend = dados.tipo_atendimento || (chatState ? chatState.temp_tipo : null);
+      const tipoPagto = dados.tipo_pagamento || (chatState ? chatState.temp_pagamento : null);
+      const convId = dados.convenio_id || (chatState ? chatState.temp_convenio_id : null);
+      const medId = dados.medico_id || (chatState ? chatState.temp_medico_id : null);
+
+      if (!tipoAtend) {
+        proximoEstado = 'AWAITING_TYPE';
+      } else if (!tipoPagto) {
+        proximoEstado = 'AWAITING_PAYMENT';
+      } else if (tipoPagto === 'convenio' && !convId) {
+        proximoEstado = 'AWAITING_CONVENIO';
+      } else if (!medId) {
+        proximoEstado = 'AWAITING_SPECIALTY';
+      }
+
+      // Se já temos o médico, buscar e salvar seus slots futuros para uso em caso de fallback
+      let slotsJson = null;
+      if (medId) {
+        try {
+          const dbSlots = await dbAll(
+            "SELECT d.id, d.data, d.hora_inicio, m.nome as medico_nome FROM Disponibilidade d JOIN Medicos m ON d.medico_id = m.id WHERE d.medico_id = ? AND d.data >= ? AND d.status_disponivel = 1 ORDER BY d.data ASC, d.hora_inicio ASC LIMIT 5",
+            [medId, brTime.dateStr]
+          );
+          const slotsFiltered = dbSlots.filter(slot => {
+            const slotDate = new Date(`${slot.data}T${slot.hora_inicio}:00`);
+            const diffMs = slotDate.getTime() - brTime.fullDate.getTime();
+            const diffHours = diffMs / (1000 * 60 * 60);
+            return diffHours >= 1.0;
+          });
+          slotsJson = JSON.stringify(slotsFiltered);
+        } catch (e) {
+          console.error("Erro ao carregar slots temporários em processGeminiChatbot:", e);
+        }
+      }
+
+      await setChatState(whatsapp, proximoEstado, {
+        tipo: tipoAtend,
+        pagamento: tipoPagto,
+        convenio_id: convId,
+        medico_id: medId,
+        slots_json: slotsJson
       });
     }
 
@@ -1393,12 +1438,27 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
         }
       } 
       else if (chatState.estado === 'AWAITING_SLOT_SELECTION') {
-        const slots = JSON.parse(chatState.temp_slots_json || '[]');
-        const selectionIndex = parseInt(respostaText) - 1;
+        let slots = [];
+        try {
+          slots = JSON.parse(chatState.temp_slots_json || '[]');
+        } catch (e) {
+          slots = [];
+        }
 
-        if (isNaN(selectionIndex) || selectionIndex < 0 || selectionIndex >= slots.length) {
-          responseTextBot = `Escolha inválida. Por favor, envie apenas o *número* correspondente da lista (de 1 a ${slots.length}):`;
+        if (slots.length === 0) {
+          // Se não há slots no estado, redirecionar de volta para buscar especialidade de forma humanizada
+          await setChatState(whatsapp, 'AWAITING_SPECIALTY', {
+            tipo: chatState.temp_tipo,
+            pagamento: chatState.temp_pagamento,
+            convenio_id: chatState.temp_convenio_id
+          });
+          responseTextBot = 'Desculpe-me, não encontrei horários disponíveis para o médico escolhido no momento. 😔\n\nPor favor, digite qual outra *especialidade médica* ou *sintoma* você gostaria de tratar hoje para buscarmos opções:';
         } else {
+          const selectionIndex = parseInt(respostaText) - 1;
+
+          if (isNaN(selectionIndex) || selectionIndex < 0 || selectionIndex >= slots.length) {
+            responseTextBot = `Ops! Não consegui identificar a sua escolha. 🗓️\n\nPor favor, responda digitando apenas o *número* correspondente da lista acima (de 1 a ${slots.length}):`;
+          } else {
           const selectedSlot = slots[selectionIndex];
           const medico = await dbGet("SELECT nome, especialidade, valor_consulta FROM Medicos WHERE id = ?", [chatState.temp_medico_id]);
           const valorConsulta = (medico && medico.valor_consulta !== null && medico.valor_consulta !== undefined) ? medico.valor_consulta : 150.00;
@@ -1429,6 +1489,7 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
         }
       }
     }
+  }
 
     // 3. Gravar resposta do Bot
     if (responseTextBot) {
