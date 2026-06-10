@@ -14,7 +14,7 @@ function ConfiguracoesView() {
     lembrete_horario: '08:00',
     lembrete_modelo: '',
     gemini_api_key: '',
-    gemini_model: 'gemini-1.5-flash',
+    gemini_model: 'gemini-2.0-flash',
     bot_system_instruction: ''
   });
 
@@ -298,11 +298,13 @@ function ConfiguracoesView() {
               <label className="form-label">Modelo de IA (Gemini)</label>
               <select
                 className="form-control"
-                value={configs.gemini_model || 'gemini-1.5-flash'}
+                value={configs.gemini_model || 'gemini-2.0-flash'}
                 onChange={(e) => handleInputChange('gemini_model', e.target.value)}
               >
-                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Recomendado - Rápido e econômico)</option>
-                <option value="gemini-1.5-pro">Gemini 1.5 Pro (Mais inteligente - Maior latência)</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash (Recomendado - Rápido e inteligente)</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Mais recente - Performance aprimorada)</option>
+                <option value="gemini-flash-latest">Gemini Flash Latest (Sempre a última versão estável)</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Extremamente inteligente - Maior latência)</option>
               </select>
             </div>
 

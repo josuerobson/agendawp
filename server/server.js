@@ -1181,7 +1181,7 @@ app.post('/api/whatsapp/sim-reply', async (req, res) => {
     const clinicaNameRow = await dbGet("SELECT valor FROM Configuracoes WHERE chave = 'nome_clinica'");
 
     const geminiApiKey = geminiKeyRow ? geminiKeyRow.valor : '';
-    const geminiModel = (geminiModelRow && geminiModelRow.valor) ? geminiModelRow.valor : 'gemini-1.5-flash';
+    const geminiModel = (geminiModelRow && geminiModelRow.valor) ? geminiModelRow.valor : 'gemini-2.0-flash';
     const systemInstruction = geminiPromptRow ? geminiPromptRow.valor : '';
     const clinicaName = clinicaNameRow ? clinicaNameRow.valor : 'Agenda WP';
 
@@ -1730,7 +1730,7 @@ app.get('/api/diagnose-ai', async (req, res) => {
     });
 
     const apiKey = configs['gemini_api_key'] || '';
-    const model = configs['gemini_model'] || 'gemini-1.5-flash';
+    const model = configs['gemini_model'] || 'gemini-2.0-flash';
     const botAtivo = configs['bot_ativo'] === '1';
     const systemInstruction = configs['bot_system_instruction'] || '';
     const clinicaName = configs['nome_clinica'] || 'Agenda WP';

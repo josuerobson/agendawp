@@ -28,7 +28,7 @@ async function run() {
     });
 
     const apiKey = configs['gemini_api_key'];
-    const model = configs['gemini_model'] || 'gemini-1.5-flash';
+    const model = configs['gemini_model'] || 'gemini-2.0-flash';
     const systemInstruction = configs['bot_system_instruction'] || 'Você é um assistente virtual.';
     const clinicaName = configs['nome_clinica'] || 'Agenda WP';
 
