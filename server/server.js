@@ -967,6 +967,7 @@ INSTRUÇÕES DO SCHEMA DE RESPOSTA JSON:
 Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propriedades:
 - "respostaTextBot": O texto em linguagem natural simpático e humanizado que será enviado ao WhatsApp do paciente.
 - "solicitaIntervencaoHumana": Defina como true se o usuário pedir explicitamente para falar com um atendente humano, se expressar raiva/insatisfação extrema, ou se o assunto estiver fora do escopo de agendamentos.
+- "confirmandoNovoAgendamento": Defina como true somente se nesta resposta você estiver concluindo e confirmando ao paciente a marcação de um NOVO agendamento (consulta ou exame). Defina como false se você estiver apenas listando agendamentos que já existem na lista 8, respondendo a dúvidas, ou realizando a triagem inicial sem finalizar a marcação.
 - "dadosExtraidos": Objeto contendo os dados identificados na conversa atual. Se não foram identificados ou não se aplicam, defina-os como null ou omita.
   - "nome": Nome completo extraído se o paciente o informar agora ou se já estiver cadastrado.
   - "cpf": CPF formatado ou limpo se informado agora ou se já cadastrado.
@@ -990,6 +991,7 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
           properties: {
             respostaTextBot: { type: "STRING" },
             solicitaIntervencaoHumana: { type: "BOOLEAN" },
+            confirmandoNovoAgendamento: { type: "BOOLEAN" },
             dadosExtraidos: {
               type: "OBJECT",
               properties: {
@@ -1004,7 +1006,7 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
               }
             }
           },
-          required: ["respostaTextBot", "solicitaIntervencaoHumana"]
+          required: ["respostaTextBot", "solicitaIntervencaoHumana", "confirmandoNovoAgendamento"]
         }
       }
     };
@@ -1091,10 +1093,13 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
       }
     }
 
-    // Mismatch check: IA confirmou no texto mas não extraiu o slot_id
-    const confirmRegex = /(confirmad|agendamento realizad|marcado com sucess|consulta reservad|exame reservad|marcado para)/i;
-    if (paciente && confirmRegex.test(result.respostaTextBot) && !dados.slot_id) {
-      console.warn(`[AI Bot] Mismatch detectado: IA confirmou no texto mas não extraiu o slot_id. Sobrescrevendo resposta.`);
+    // Mismatch check: IA confirmou no texto ou no boolean estruturado mas não extraiu o slot_id
+    const confirmRegex = /((excelente|perfeito|ótimo|tudo certo|sucesso)[!\s,]*seu agendamento (está confirmado|foi realizado|foi solicitado)|(consulta|exame) (agendada|marcada|reservada) com sucesso|agendamento (realizado|solicitado|confirmado) com sucesso)/i;
+    const isConfirmingInText = confirmRegex.test(result.respostaTextBot);
+    const hasMismatch = (result.confirmandoNovoAgendamento || isConfirmingInText) && !dados.slot_id;
+
+    if (paciente && hasMismatch) {
+      console.warn(`[AI Bot] Mismatch detectado: IA confirmou no texto ou no boolean mas não extraiu o slot_id. Sobrescrevendo resposta.`);
       const pacienteNome = paciente.nome ? paciente.nome.split(' ')[0] : 'paciente';
       result.respostaTextBot = `Desculpe, ${pacienteNome}! Houve uma pequena divergência técnica ao registrar o horário escolhido no banco de dados. 😔\n\nPor favor, selecione e digite novamente o horário desejado para que eu possa salvá-lo no sistema.`;
       
