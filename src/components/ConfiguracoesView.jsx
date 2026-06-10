@@ -302,6 +302,7 @@ function ConfiguracoesView() {
                 onChange={(e) => handleInputChange('gemini_model', e.target.value)}
               >
                 <option value="gemini-2.0-flash">Gemini 2.0 Flash (Recomendado - Rápido e inteligente)</option>
+                <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Super rápido - Baixo consumo)</option>
                 <option value="gemini-2.5-flash">Gemini 2.5 Flash (Mais recente - Performance aprimorada)</option>
                 <option value="gemini-flash-latest">Gemini Flash Latest (Sempre a última versão estável)</option>
                 <option value="gemini-2.5-pro">Gemini 2.5 Pro (Extremamente inteligente - Maior latência)</option>
