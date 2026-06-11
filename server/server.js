@@ -916,6 +916,25 @@ const processGeminiChatbot = async (whatsapp, respostaText, paciente, chatState,
       if (med) medicoNome = med.nome;
     }
 
+    // 5.5. Formatar slots de horários armazenados no estado do chat para guiar a IA na correspondência
+    let slotsEstadoJson = "Nenhum horário salvo no estado do chat no momento.";
+    if (chatState && chatState.temp_slots_json) {
+      try {
+        const slotsParsed = JSON.parse(chatState.temp_slots_json);
+        if (Array.isArray(slotsParsed) && slotsParsed.length > 0) {
+          slotsEstadoJson = JSON.stringify(slotsParsed.map((s, idx) => ({
+            opcao_numero: idx + 1,
+            id: s.id,
+            data: s.data.split('-').reverse().join('/'),
+            hora: s.hora_inicio || s.hora,
+            medico_nome: s.medico_nome || s.medico || (medicoNome || 'médico da clínica')
+          })));
+        }
+      } catch (e) {
+        console.error("Erro ao fazer parse de temp_slots_json para prompt:", e);
+      }
+    }
+
     // 6. Criar instruções contextuais detalhadas para a IA
     let customSystemInstruction = systemInstruction.replace(/{clinica}/g, clinicaName);
 
@@ -950,10 +969,21 @@ ${agendamentosAtivos.length > 0
   ? JSON.stringify(agendamentosAtivos.map(a => ({ data_hora: a.data_hora.split(' ').map((v, i) => i === 0 ? v.split('-').reverse().join('/') : v).join(' às '), tipo: a.tipo_atendimento, medico: a.medico_nome, especialidade: a.especialidade, status: a.status_agendamento }))) 
   : "Nenhum agendamento ativo encontrado para este paciente."}
 
+9. Lista de Horários Disponibilizados Anteriormente no Chat com seus índices (Use para correlacionar as escolhas numéricas do paciente):
+${slotsEstadoJson}
+
 REGRAS CRÍTICAS DE CONFIRMAÇÃO E INTEGRIDADE:
 * Você SOMENTE deve dizer ao paciente que um agendamento foi "confirmado", "marcado" ou "concluído" se você estiver preenchendo a propriedade "slot_id" com o ID numérico correto do slot correspondente na propriedade "dadosExtraidos" do JSON de retorno nesta mesma resposta.
 * Se você não estiver extraindo o "slot_id" no JSON (porque o slot não está disponível ou por qualquer outro motivo), você NÃO deve confirmar o agendamento no texto. Em vez disso, auxilie o paciente a escolher outro horário disponível da lista.
 * Nunca invente ou altere o convênio ou médico escolhido pelo paciente na hora da confirmação. Se ele escolheu Amil, confirme Amil. Se ele escolheu Dr. Josué, confirme Dr. Josué.
+
+REGRAS CRÍTICAS DE CORRELAÇÃO E INTERPRETAÇÃO DE HORÁRIOS:
+* O paciente pode escolher o horário digitando o número da opção (ex: "4", "opção 4") ou descrevendo por extenso (ex: "amanhã as 9:00", "dia 12 às 9h").
+* Você DEVE correlacionar a escolha do paciente com a lista 9 ou lista 7.
+* Identifique o ID do slot correspondente à escolha do paciente e preencha-o no campo "slot_id" nas propriedades JSON.
+* Lembre-se: se hoje é dia 11 de Junho de 2026, "amanhã às 09:00" refere-se à data 12/06/2026 às 09:00, que corresponde a uma das opções listadas. Correlacione e extraia o ID correto.
+* Se o paciente digitar apenas o número da opção (ex: "4"), procure o "opcao_numero": 4 na lista 9, veja qual é o seu ID e extraia-o no JSON.
+
 
 REGRAS CRÍTICAS DE FORMATAÇÃO E ESPAÇAMENTO:
 * Escreva de forma curta e altamente legível para leitura no celular (WhatsApp).
