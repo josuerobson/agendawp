@@ -261,6 +261,19 @@ async function initDatabase() {
       )
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS AILogs (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        whatsapp VARCHAR(50),
+        status VARCHAR(50),
+        modelo VARCHAR(50),
+        request_text TEXT,
+        response_json TEXT,
+        detalhes TEXT
+      )
+    `);
+
     // Adições de colunas (caso as tabelas já existam)
     await pool.query(`
       ALTER TABLE Medicos ADD COLUMN IF NOT EXISTS sala_id INTEGER REFERENCES Salas(id) ON DELETE SET NULL;

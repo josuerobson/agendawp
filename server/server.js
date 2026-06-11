@@ -739,6 +739,26 @@ app.post('/api/whatsapp/clear', async (req, res) => {
   }
 });
 
+// Buscar logs da IA (últimos 50)
+app.get('/api/ai-logs', async (req, res) => {
+  try {
+    const logs = await dbAll("SELECT id, timestamp, whatsapp, status, modelo, request_text, response_json, detalhes FROM AILogs ORDER BY id DESC LIMIT 50");
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Limpar logs da IA
+app.post('/api/ai-logs/clear', async (req, res) => {
+  try {
+    await dbRun("DELETE FROM AILogs");
+    res.json({ success: true, message: 'Logs de IA limpos com sucesso.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Helpers para controle de estado do Chatbot
 const getChatState = (whatsapp) => dbGet("SELECT * FROM ChatState WHERE whatsapp = ?", [whatsapp]);
 const setChatState = (whatsapp, state, data = {}) => {
@@ -813,6 +833,20 @@ const cleanJsonString = (str) => {
     cleaned = cleaned.substring(0, cleaned.length - 3);
   }
   return cleaned.trim();
+};
+
+// Helper para salvar logs de execução da IA no PostgreSQL
+const saveAILog = async (whatsapp, status, modelo, requestText, responseJson, detalhes = '') => {
+  try {
+    const responseStr = typeof responseJson === 'object' ? JSON.stringify(responseJson) : (responseJson || '');
+    await dbRun(
+      `INSERT INTO AILogs (whatsapp, status, modelo, request_text, response_json, detalhes) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [whatsapp, status, modelo, requestText, responseStr, detalhes]
+    );
+  } catch (err) {
+    console.error("[AI Logs] Erro ao gravar log no banco:", err);
+  }
 };
 
 // Processar resposta do paciente via IA do Google Gemini com histórico e contexto dinâmico
@@ -1051,6 +1085,7 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
 
     if (!res.ok) {
       const errorText = await res.text();
+      await saveAILog(whatsapp, 'failed', model, respostaText, errorText, `HTTP Status: ${res.status}`);
       throw new Error(`Erro na API do Gemini: ${res.status} - ${errorText}`);
     }
 
@@ -1069,11 +1104,13 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
     // 9. Processar o retorno da IA no Banco de Dados
     const dados = result.dadosExtraidos || {};
     const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    let isMismatch = false;
 
     if (result.solicitaIntervencaoHumana) {
       await setChatState(whatsapp, 'ATENDIMENTO_HUMANO');
       console.log(`[AI Bot] Intervenção humana solicitada para ${whatsapp}.`);
       await saveMessageAndNotifyN8N(null, whatsapp, result.respostaTextBot, 'lido', nowStr);
+      await saveAILog(whatsapp, 'success', model, respostaText, result, 'Intervenção humana solicitada');
       return { success: true, botReplied: result.respostaTextBot };
     }
 
@@ -1131,6 +1168,7 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
     if (paciente && hasMismatch) {
       console.warn(`[AI Bot] Mismatch detectado: IA confirmou no texto ou no boolean mas não extraiu o slot_id. Sobrescrevendo resposta.`);
       const pacienteNome = paciente.nome ? paciente.nome.split(' ')[0] : 'paciente';
+      const originalBotResponse = result.respostaTextBot;
       result.respostaTextBot = `Desculpe, ${pacienteNome}! Houve uma pequena divergência técnica ao registrar o horário escolhido no banco de dados. 😔\n\nPor favor, selecione e digite novamente o horário desejado para que eu possa salvá-lo no sistema.`;
       
       // Forçar estado em AWAITING_SLOT_SELECTION
@@ -1141,6 +1179,16 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
         medico_id: dados.medico_id || (chatState ? chatState.temp_medico_id : null),
         slots_json: chatState ? chatState.temp_slots_json : null
       });
+
+      isMismatch = true;
+      await saveAILog(
+        whatsapp,
+        'mismatch',
+        model,
+        respostaText,
+        result,
+        `Estado antes: ${chatState ? chatState.estado : 'IDLE'}. IA tentou confirmar agendamento (Texto Original: "${originalBotResponse}"), mas dados.slot_id veio vazio ou nulo.`
+      );
     }
 
     // Se o paciente existe (ou acabou de ser criado) e escolheu o slot de agendamento!
@@ -1234,6 +1282,12 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
 
     // Salvar resposta no histórico e retornar
     await saveMessageAndNotifyN8N(null, whatsapp, result.respostaTextBot, 'lido', nowStr);
+    
+    // Log de sucesso
+    if (!isMismatch) {
+      await saveAILog(whatsapp, 'success', model, respostaText, result, `Estado final do chat: ${chatState ? chatState.estado : 'IDLE'}`);
+    }
+
     return { success: true, botReplied: result.respostaTextBot };
 
   } catch (err) {
@@ -1245,6 +1299,10 @@ Você DEVE retornar a resposta EXATAMENTE no formato JSON com as seguintes propr
     } catch (fsErr) {
       console.error("Erro ao gravar gemini_error.log:", fsErr);
     }
+    
+    // Log de erro de execução
+    await saveAILog(whatsapp, 'error', model, respostaText, { message: err.message, stack: err.stack }, 'Exceção capturada no try/catch de processGeminiChatbot');
+
     return { success: false };
   }
 };

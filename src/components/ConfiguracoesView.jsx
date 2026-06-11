@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Settings, AlertCircle, Info, Sparkles, Link, Bell, Shield, MessageSquare } from 'lucide-react';
+import { Save, Settings, AlertCircle, Info, Sparkles, Link, Bell, Shield, MessageSquare, Trash2, RefreshCw, Cpu, X } from 'lucide-react';
 
 function ConfiguracoesView() {
   const [configs, setConfigs] = useState({
@@ -22,9 +22,56 @@ function ConfiguracoesView() {
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
 
+  // Estados para Monitor de Logs da IA
+  const [logs, setLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [selectedLog, setSelectedLog] = useState(null);
+
   useEffect(() => {
     fetchConfigs();
+    fetchLogs(false);
+    
+    // Auto-refresh de logs a cada 10 segundos
+    const interval = setInterval(() => {
+      fetchLogs(true);
+    }, 10000);
+    
+    return () => clearInterval(interval);
   }, []);
+
+  const fetchLogs = async (silent = true) => {
+    if (!silent) setLogsLoading(true);
+    try {
+      const res = await fetch('/api/ai-logs');
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data);
+      }
+    } catch (err) {
+      console.error('Erro ao buscar logs da IA:', err);
+    } finally {
+      if (!silent) setLogsLoading(false);
+    }
+  };
+
+  const clearLogs = async () => {
+    if (!window.confirm('Tem certeza que deseja apagar todos os logs de execução da IA? Esta ação não pode ser desfeita.')) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/ai-logs/clear', { method: 'POST' });
+      if (res.ok) {
+        setSuccess('Logs da IA limpos com sucesso! 🗑️');
+        fetchLogs(false);
+        setTimeout(() => setSuccess(''), 5000);
+      } else {
+        throw new Error('Falha ao limpar logs');
+      }
+    } catch (err) {
+      setError('Erro ao limpar os logs da IA: ' + err.message);
+      setTimeout(() => setError(''), 5000);
+    }
+  };
 
   const fetchConfigs = async () => {
     try {
@@ -426,6 +473,209 @@ function ConfiguracoesView() {
         </div>
       </form>
 
+      {/* Seção de Logs em Tempo Real da IA */}
+      <div className="glass-panel config-logs-section" style={{ marginTop: '2rem', padding: '2rem' }}>
+        <div className="card-header" style={{ justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <Cpu className="card-icon text-primary animate-pulse" size={22} style={{ animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
+            <div>
+              <h4 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Logs de Execução da IA (Tempo Real)</h4>
+              <p className="section-desc" style={{ margin: 0, marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Acompanhe o processamento de mensagens pelo Gemini, erros de cota, status HTTP e mismatches de slots.
+              </p>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => fetchLogs(false)}
+              disabled={logsLoading}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+            >
+              <RefreshCw size={16} className={logsLoading ? 'animate-spin' : ''} />
+              Atualizar
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={clearLogs}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', fontSize: '0.85rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--error)', color: 'var(--error)' }}
+            >
+              <Trash2 size={16} />
+              Limpar Logs
+            </button>
+          </div>
+        </div>
+
+        {logs.length === 0 ? (
+          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            Nenhum log registrado ainda. Envie mensagens para o chatbot para iniciar o monitoramento.
+          </div>
+        ) : (
+          <div className="table-responsive" style={{ overflowX: 'auto' }}>
+            <table className="logs-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '0.75rem 1rem' }}>Horário</th>
+                  <th style={{ padding: '0.75rem 1rem' }}>WhatsApp</th>
+                  <th style={{ padding: '0.75rem 1rem' }}>Modelo</th>
+                  <th style={{ padding: '0.75rem 1rem' }}>Status</th>
+                  <th style={{ padding: '0.75rem 1rem' }}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => {
+                  let statusColor = 'var(--text-muted)';
+                  let statusBg = 'rgba(255,255,255,0.05)';
+                  let statusText = log.status;
+
+                  if (log.status === 'success') {
+                    statusColor = '#10B981';
+                    statusBg = 'rgba(16, 185, 129, 0.1)';
+                    statusText = 'Sucesso';
+                  } else if (log.status === 'mismatch') {
+                    statusColor = '#F59E0B';
+                    statusBg = 'rgba(245, 158, 11, 0.1)';
+                    statusText = 'Divergência';
+                  } else if (log.status === 'failed') {
+                    statusColor = '#EF4444';
+                    statusBg = 'rgba(239, 68, 68, 0.1)';
+                    statusText = 'Falha API';
+                  } else if (log.status === 'error') {
+                    statusColor = '#DC2626';
+                    statusBg = 'rgba(220, 38, 38, 0.15)';
+                    statusText = 'Erro Interno';
+                  }
+
+                  const dateFormatted = new Date(log.timestamp).toLocaleString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
+                  });
+
+                  return (
+                    <tr key={log.id} style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer' }} onClick={() => setSelectedLog(log)}>
+                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>{dateFormatted}</td>
+                      <td style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>{log.whatsapp}</td>
+                      <td style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)' }}>{log.modelo}</td>
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        <span style={{ display: 'inline-block', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, color: statusColor, backgroundColor: statusBg }}>
+                          {statusText}
+                        </span>
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedLog(log);
+                          }}
+                        >
+                          Detalhes
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal de Detalhes do Log */}
+      {selectedLog && (
+        <div className="log-modal-overlay" onClick={() => setSelectedLog(null)}>
+          <div className="log-modal-content glass-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="log-modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Cpu size={20} className="text-primary" />
+                <h4 style={{ margin: 0 }}>Detalhes do Processamento da IA</h4>
+              </div>
+              <button type="button" className="close-modal-btn" onClick={() => setSelectedLog(null)}>
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="log-modal-body">
+              <div className="log-meta-grid">
+                <div>
+                  <span className="meta-label">ID do Log</span>
+                  <span className="meta-value">#{selectedLog.id}</span>
+                </div>
+                <div>
+                  <span className="meta-label">WhatsApp</span>
+                  <span className="meta-value">{selectedLog.whatsapp}</span>
+                </div>
+                <div>
+                  <span className="meta-label">Horário</span>
+                  <span className="meta-value">
+                    {new Date(selectedLog.timestamp).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                  </span>
+                </div>
+                <div>
+                  <span className="meta-label">Modelo</span>
+                  <span className="meta-value">{selectedLog.modelo}</span>
+                </div>
+              </div>
+
+              <div className="log-meta-status-row" style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="meta-label">Status:</span>
+                <span style={{
+                  padding: '0.25rem 0.6rem',
+                  borderRadius: '4px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  color: selectedLog.status === 'success' ? '#10B981' : selectedLog.status === 'mismatch' ? '#F59E0B' : '#EF4444',
+                  backgroundColor: selectedLog.status === 'success' ? 'rgba(16, 185, 129, 0.1)' : selectedLog.status === 'mismatch' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)'
+                }}>
+                  {selectedLog.status.toUpperCase()}
+                </span>
+              </div>
+
+              {selectedLog.detalhes && (
+                <div className="log-data-section">
+                  <h5>Contexto / Informações de Depuração</h5>
+                  <div className="log-text-block debug-details">
+                    {selectedLog.detalhes}
+                  </div>
+                </div>
+              )}
+
+              <div className="log-data-section">
+                <h5>Mensagem Enviada pelo Paciente (Request)</h5>
+                <div className="log-text-block user-request">
+                  {selectedLog.request_text}
+                </div>
+              </div>
+
+              <div className="log-data-section">
+                <h5>Resposta do Gemini (JSON ou Retorno da API)</h5>
+                <pre className="log-json-block">
+                  <code>
+                    {(() => {
+                      try {
+                        const parsed = JSON.parse(selectedLog.response_json);
+                        return JSON.stringify(parsed, null, 2);
+                      } catch (e) {
+                        return selectedLog.response_json;
+                      }
+                    })()}
+                  </code>
+                </pre>
+              </div>
+            </div>
+
+            <div className="log-modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setSelectedLog(null)}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .config-view-container {
           padding-bottom: 2rem;
@@ -536,6 +786,167 @@ function ConfiguracoesView() {
           .grid-2-cols {
             grid-template-columns: 1fr;
           }
+        }
+
+        .animate-spin {
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        
+        .logs-table tbody tr:hover {
+          background: rgba(255, 255, 255, 0.02);
+        }
+        
+        /* Modal Styles */
+        .log-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.7);
+          backdrop-filter: blur(5px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+          padding: 1.5rem;
+        }
+        
+        .log-modal-content {
+          width: 100%;
+          max-width: 800px;
+          max-height: 85vh;
+          overflow-y: auto;
+          background: #111827;
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-md);
+          display: flex;
+          flex-direction: column;
+          box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+        
+        .log-modal-header {
+          padding: 1.25rem 1.5rem;
+          border-bottom: 1px solid var(--border-color);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        
+        .close-modal-btn {
+          background: transparent;
+          border: none;
+          color: var(--text-muted);
+          cursor: pointer;
+          padding: 0.25rem;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: background 0.2s, color 0.2s;
+        }
+        
+        .close-modal-btn:hover {
+          background: rgba(255, 255, 255, 0.05);
+          color: var(--text-primary);
+        }
+        
+        .log-modal-body {
+          padding: 1.5rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1.25rem;
+          overflow-y: auto;
+        }
+        
+        .log-meta-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 1rem;
+          background: rgba(255, 255, 255, 0.02);
+          padding: 1rem;
+          border-radius: var(--radius-sm);
+          border: 1px solid var(--border-color);
+        }
+        
+        .meta-label {
+          display: block;
+          font-size: 0.75rem;
+          color: var(--text-muted);
+          margin-bottom: 0.25rem;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        
+        .meta-value {
+          display: block;
+          font-size: 0.9rem;
+          font-weight: 500;
+          color: var(--text-primary);
+        }
+        
+        .log-data-section {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        
+        .log-data-section h5 {
+          margin: 0;
+          font-size: 0.85rem;
+          font-weight: 600;
+          color: var(--primary);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        
+        .log-text-block {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid var(--border-color);
+          padding: 1rem;
+          border-radius: var(--radius-sm);
+          font-size: 0.9rem;
+          line-height: 1.5;
+          color: var(--text-secondary);
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        
+        .debug-details {
+          border-left: 3px solid var(--primary);
+          font-family: monospace;
+          font-size: 0.85rem;
+        }
+        
+        .user-request {
+          border-left: 3px solid #6366F1;
+        }
+        
+        .log-json-block {
+          background: #0B0F19;
+          border: 1px solid var(--border-color);
+          padding: 1rem;
+          border-radius: var(--radius-sm);
+          font-family: monospace;
+          font-size: 0.85rem;
+          line-height: 1.4;
+          color: #E2E8F0;
+          overflow-x: auto;
+          white-space: pre-wrap;
+          word-break: break-all;
+          max-height: 300px;
+          margin: 0;
+        }
+        
+        .log-modal-footer {
+          padding: 1.25rem 1.5rem;
+          border-top: 1px solid var(--border-color);
+          display: flex;
+          justify-content: flex-end;
         }
       `}</style>
     </div>
